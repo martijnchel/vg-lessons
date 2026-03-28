@@ -26,16 +26,8 @@ const activityNames = {
     "594707": "Vinyasa Yoga"
 };
 
-// --- DATABASE: INSTRUCTEURS ---
-// Vul hier de namen aan zodra je ze ziet op /check
-const instructorNames = {
-    "16925839": "Instructeur A", 
-    "13932460": "Instructeur B",
-    "33449952": "Instructeur C",
-    "33453831": "Instructeur D"
-};
-
 let lessenCache = [];
+let nextTimeout;
 
 async function syncVirtuagym() {
     try {
@@ -50,19 +42,45 @@ async function syncVirtuagym() {
         if (response.data && response.data.result) {
             lessenCache = response.data.result.filter(e => e.canceled === false).map(e => {
                 const naam = e.title || activityNames[e.activity_id] || "Extra groepsles";
-                const docent = instructorNames[e.instructor_id] || `Trainer (${e.instructor_id})`;
-                
                 return {
                     ...e,
                     display_title: naam,
-                    display_instructor: docent,
                     start_tijd: e.start.split(' ')[1].substring(0, 5),
                     eind_tijd: e.end.split(' ')[1].substring(0, 5)
                 };
             });
+            console.log(`[${new Date().toLocaleTimeString('nl-NL', {timeZone: 'Europe/Amsterdam'})}] Sync voltooid.`);
             if (HOMEY_URL) updateHomey();
         }
     } catch (e) { console.error("Sync Error:", e.message); }
+    
+    // Plan de volgende update in op basis van de tijd
+    scheduleNextUpdate();
+}
+
+function scheduleNextUpdate() {
+    const nu = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Amsterdam"}));
+    const uren = nu.getHours();
+    const minuten = nu.getMinutes();
+    const tijdDecimaal = uren + (minuten / 60);
+
+    let intervalMs;
+
+    // Piekuren: 06:30 - 12:00 OF 17:00 - 21:30
+    const isOchtendPiek = (tijdDecimaal >= 6.5 && tijdDecimaal < 12);
+    const isAvondPiek = (tijdDecimaal >= 17 && tijdDecimaal < 21.5);
+
+    if (isOchtendPiek || isAvondPiek) {
+        intervalMs = 5 * 60 * 1000; // 5 minuten
+        console.log("Piekuren: Volgende update over 5 minuten.");
+    } else {
+        intervalMs = 15 * 60 * 1000; // 15 minuten
+        console.log("Daluur: Volgende update over 15 minuten.");
+    }
+
+    // Voorkom dubbele timeouts
+    if (nextTimeout) clearTimeout(nextTimeout);
+    nextTimeout = setTimeout(syncVirtuagym, intervalMs);
 }
 
 async function updateHomey() {
@@ -78,11 +96,9 @@ async function updateHomey() {
         if (lesNu) {
             await sendTag("Les_Nu_Naam", lesNu.display_title);
             await sendTag("Les_Nu_Bezetting", `BEZETTING: ${lesNu.attendees}/${lesNu.max_places}`);
-            await sendTag("Les_Nu_Trainer", lesNu.display_instructor);
         } else {
             await sendTag("Les_Nu_Naam", "VRIJ TRAINEN");
             await sendTag("Les_Nu_Bezetting", "");
-            await sendTag("Les_Nu_Trainer", "");
         }
 
         if (lesNext) {
@@ -90,31 +106,30 @@ async function updateHomey() {
             await sendTag("Les_Next_Naam", lesNext.display_title);
             await sendTag("Les_Next_Tijd", `OM ${lesNext.start_tijd} UUR`);
             await sendTag("Les_Next_Bezetting", vrij <= 0 ? "VOLGEBOEKT" : `NOG ${vrij} PLEKKEN VRIJ`);
-            await sendTag("Les_Next_Trainer", lesNext.display_instructor);
         }
     } catch (err) { console.error("Homey Send Error"); }
 }
 
 async function sendTag(name, value) {
     if (!HOMEY_URL) return;
-    await axios.get(`${HOMEY_URL}?tag=${encodeURIComponent(name)}&value=${encodeURIComponent(value)}`);
+    try {
+        await axios.get(`${HOMEY_URL}?tag=${encodeURIComponent(name)}&value=${encodeURIComponent(value)}`);
+    } catch (e) { /* Negeer Homey fouten */ }
 }
 
 app.get('/check', (req, res) => {
     const nu = new Date().toLocaleTimeString("nl-NL", {timeZone: "Europe/Amsterdam", hour: '2-digit', minute: '2-digit', hour12: false});
     let html = `<html><body style="font-family:sans-serif; background:#121212; color:white; padding:40px;">`;
     html += `<h1>YVSPORT Dashboard Check</h1><p>Tijd: ${nu}</p><table border="1" cellpadding="10" style="width:100%; border-collapse:collapse;">`;
-    html += `<tr><th>Tijd</th><th>Lesnaam</th><th>Trainer</th><th>Bezetting</th></tr>`;
+    html += `<tr><th>Tijd</th><th>Lesnaam</th><th>Bezetting</th></tr>`;
     lessenCache.forEach(l => {
         const isNu = nu >= l.start_tijd && nu < l.eind_tijd;
-        html += `<tr style="color:${isNu ? '#00FF00' : 'white'}"><td>${l.start_tijd}</td><td>${l.display_title}</td><td>${l.display_instructor}</td><td>${l.attendees}/${l.max_places}</td></tr>`;
+        html += `<tr style="color:${isNu ? '#00FF00' : 'white'}"><td>${l.start_tijd}</td><td>${l.display_title}</td><td>${l.attendees}/${l.max_places}</td></tr>`;
     });
     res.send(html + "</table></body></html>");
 });
 
-app.get('/scan', (req, res) => res.redirect('/check')); // Scan is niet meer nodig, maar we houden de route voor de zekerheid
-
 app.listen(PORT, () => {
-    syncVirtuagym();
-    setInterval(syncVirtuagym, 5 * 60 * 1000);
+    console.log(`Server gestart op poort ${PORT}`);
+    syncVirtuagym(); // Start de eerste sync direct
 });
