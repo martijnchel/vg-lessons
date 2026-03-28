@@ -5,7 +5,6 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const { CLUB_ID, API_KEY, CLUB_SECRET, HOMEY_URL } = process.env;
 
-// --- DATABASE: LESNAMEN ---
 const activityNames = {
     "595083": "Buikspierkwartier", "595096": "SportYV wandelend", "594693": "Spinning",
     "594694": "Pilates", "595082": "Boksfit", "589058": "Fitcircuit",
@@ -18,12 +17,11 @@ const activityNames = {
 let lessenCache = [];
 let nextSyncTimeout;
 
-// --- STAP 1: DATA OPHALEN BIJ VIRTUAGYM (Vandaag + Morgen) ---
 async function syncVirtuagym() {
     try {
         const nuNL = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Amsterdam"}));
         const start = Math.floor(new Date(nuNL).setHours(0,0,0,0) / 1000);
-        const end = start + (2 * 24 * 60 * 60) - 1; // 48 uur window
+        const end = start + (2 * 24 * 60 * 60) - 1; 
 
         const response = await axios.get(`https://api.virtuagym.com/api/v1/club/${CLUB_ID}/events`, {
             params: { api_key: API_KEY, club_secret: CLUB_SECRET, timestamp_start: start, timestamp_end: end }
@@ -41,31 +39,26 @@ async function syncVirtuagym() {
                     full_start: eventDate
                 };
             });
-            console.log(`[${new Date().toLocaleTimeString('nl-NL')}] API Sync geslaagd.`);
+            console.log(`[${new Date().toLocaleTimeString('nl-NL')}] Sync OK.`);
         }
     } catch (e) { console.error("Sync Error:", e.message); }
     scheduleNextSync();
 }
 
-// --- STAP 2: INTERVAL BEPALEN (Piek vs Dal) ---
 function scheduleNextSync() {
     const nu = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Amsterdam"}));
     const tijdDecimaal = nu.getHours() + (nu.getMinutes() / 60);
     const isPiek = (tijdDecimaal >= 6.5 && tijdDecimaal < 12) || (tijdDecimaal >= 17 && tijdDecimaal < 21.5);
-    const intervalMs = isPiek ? 5 * 60 * 1000 : 15 * 60 * 1000;
-    
     if (nextSyncTimeout) clearTimeout(nextSyncTimeout);
-    nextSyncTimeout = setTimeout(syncVirtuagym, intervalMs);
+    nextSyncTimeout = setTimeout(syncVirtuagym, isPiek ? 300000 : 900000);
 }
 
-// --- STAP 3: DATA BUNDELEN EN NAAR HOMEY STUREN (Elke 20 sec) ---
 async function updateHomeyRotation() {
     if (lessenCache.length === 0) return;
 
     const nuDate = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Amsterdam"}));
     const nuStr = nuDate.toLocaleTimeString("nl-NL", {hour: '2-digit', minute: '2-digit', hour12: false});
-    const seconden = nuDate.getSeconds();
-    const roulatieIndex = Math.floor(seconden / 20);
+    const roulatieIndex = Math.floor(nuDate.getSeconds() / 20);
 
     let lessenNu = lessenCache.filter(l => l.is_vandaag && nuStr >= l.start_tijd && nuStr < l.eind_tijd);
     let alleToekomstig = lessenCache.filter(l => l.full_start > nuDate).sort((a,b) => a.full_start - b.full_start);
@@ -77,25 +70,31 @@ async function updateHomeyRotation() {
     let tweedeLes = alleToekomstig.find(l => l.start_tijd !== eerstvolgendeTijd || l.is_vandaag !== eerstvolgendeDatum);
     let lessenAfterNext = tweedeLes ? alleToekomstig.filter(l => l.start_tijd === tweedeLes.start_tijd && l.is_vandaag === tweedeLes.is_vandaag) : [];
 
-    // JSON Pakket Voorbereiden
     let data = {
-        nu_status: "VRIJ", nu_naam: "VRIJ TRAINEN", nu_tijd: "", nu_bezetting: "",
+        nu_status: "VRIJ", nu_naam: "VRIJ TRAINEN", nu_tijd: "", nu_promo_bezetting: "",
         next_naam: "GEEN LESSEN", next_tijd: "", next_bezetting: ""
     };
 
-    // Bovenste vak (Nu Bezig of Promotie binnen 60 min)
+    // BOVENSTE VAK LOGICA
     if (lessenNu.length > 0) {
         let l = lessenNu[roulatieIndex % lessenNu.length];
-        data.nu_status = "LIVE"; data.nu_naam = l.display_title; data.nu_tijd = `${l.start_tijd} - ${l.eind_tijd}`; data.nu_bezetting = `BEZETTING: ${l.attendees}/${l.max_places}`;
+        data.nu_status = "LIVE"; 
+        data.nu_naam = l.display_title; 
+        data.nu_tijd = `${l.start_tijd} - ${l.eind_tijd}`;
+        data.nu_promo_bezetting = ""; // Altijd leeg bij LIVE les
     } else if (eerstvolgendeTijd && eerstvolgendeDatum) {
         const diff = Math.round((alleToekomstig[0].full_start - nuDate.getTime()) / 1000 / 60);
         if (diff <= 60) {
             let l = lessenNext[roulatieIndex % lessenNext.length];
-            data.nu_status = "VOLGENDE"; data.nu_naam = l.display_title; data.nu_tijd = `${l.start_tijd} - ${l.eind_tijd}`; data.nu_bezetting = `START OVER ${diff} MIN`;
+            const vrij = l.max_places - l.attendees;
+            data.nu_status = "VOLGENDE"; 
+            data.nu_naam = l.display_title; 
+            data.nu_tijd = `${l.start_tijd} - ${l.eind_tijd}`;
+            data.nu_promo_bezetting = vrij <= 0 ? "VOLGEBOEKT" : `NOG ${vrij} PLEKKEN VRIJ`;
         }
     }
 
-    // Onderste vak (Volgende les, schuift door als bovenste vak promoot)
+    // ONDERSTE VAK LOGICA
     let bron = (lessenNu.length > 0 || data.nu_status === "VOLGENDE") ? (lessenAfterNext.length > 0 ? lessenAfterNext : lessenNext) : lessenNext;
     if (bron && bron.length > 0) {
         let l = bron[roulatieIndex % bron.length];
@@ -105,19 +104,12 @@ async function updateHomeyRotation() {
         data.next_bezetting = vrij <= 0 ? "VOLGEBOEKT" : `NOG ${vrij} PLEKKEN VRIJ`;
     }
 
-    sendJsonToHomey(data);
+    if (HOMEY_URL) {
+        try { await axios.get(HOMEY_URL, { params: { tag: "yvsport_data", value: JSON.stringify(data) } }); } 
+        catch (e) { console.error("Homey Webhook Error"); }
+    }
 }
 
-async function sendJsonToHomey(payload) {
-    if (!HOMEY_URL) return;
-    try {
-        await axios.get(HOMEY_URL, {
-            params: { tag: "yvsport_data", value: JSON.stringify(payload) }
-        });
-    } catch (e) { console.error("Homey Webhook Error"); }
-}
-
-// --- MONITORING PAGINA ---
 app.get('/check', (req, res) => {
     let html = `<html><body style="font-family:sans-serif; background:#121212; color:white; padding:40px;"><h1>YVSPORT Monitor</h1><table border="1" cellpadding="10" style="border-collapse:collapse; width:100%;">`;
     lessenCache.forEach(l => {
@@ -126,7 +118,4 @@ app.get('/check', (req, res) => {
     res.send(html + "</table></body></html>");
 });
 
-app.listen(PORT, () => { 
-    syncVirtuagym(); 
-    setInterval(updateHomeyRotation, 20 * 1000);
-});
+app.listen(PORT, () => { syncVirtuagym(); setInterval(updateHomeyRotation, 20000); });
