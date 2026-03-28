@@ -95,8 +95,15 @@ async function updateHomeyRotation() {
         let l = bron[roulatieIndex % bron.length];
         const vrij = l.max_places - l.attendees;
         data.next_naam = l.display_title; 
-        data.next_tijd = `${l.start_tijd} - ${l.eind_tijd}`; // Alleen tijdstip
-        data.next_bezetting = vrij <= 0 ? "VOLGEBOEKT" : `NOG ${vrij} PLEKKEN VRIJ`;
+        data.next_tijd = `${l.start_tijd} - ${l.eind_tijd}`;
+        
+        if (vrij <= 0) {
+            data.next_bezetting = "VOLGEBOEKT";
+        } else if (vrij === 1) {
+            data.next_bezetting = "NOG 1 PLEK VRIJ";
+        } else {
+            data.next_bezetting = `NOG ${vrij} PLEKKEN VRIJ`;
+        }
     }
 
     if (HOMEY_URL) {
