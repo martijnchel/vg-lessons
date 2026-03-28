@@ -6,16 +6,19 @@ const PORT = process.env.PORT || 3000;
 const { CLUB_ID, API_KEY, CLUB_SECRET, HOMEY_URL } = process.env;
 
 const activityNames = {
-    "595083": "Buikspierkwartier", "595096": "SportYV wandelen", "594693": "Spinning",
-    "594694": "Pilates", "595082": "Boksfit", "589058": "Fitcircuit",
-    "594700": "50-Fit", "595091": "HIIT", "594697": "Spinning",
-    "594699": "Flow Yoga", "595095": "60+ Kracht en Balans", "594706": "BodyBalance",
-    "594704": "BBB", "594703": "Gentle Flow Yoga", "594695": "Zumba",
-    "594701": "BodyShape", "594707": "Vinyasa Yoga"
+    "595083": "BUIKSPIERKWARTIER", "595096": "SPORTYV WANDELEN", "594693": "SPINNING",
+    "594694": "PILATES", "595082": "BOKSFIT", "589058": "FITCIRCUIT",
+    "594700": "50-FIT", "595091": "HIIT", "594697": "SPINNING",
+    "594699": "FLOW YOGA", "595095": "60+ KRACHT EN BALANS", "594706": "BODYBALANCE",
+    "594704": "BBB", "594703": "GENTLE FLOW YOGA", "594695": "ZUMBA",
+    "594701": "BODYSHAPE", "594707": "VINYASA YOGA"
 };
 
 let lessenCache = [];
 let nextSyncTimeout;
+
+// Geheugen om onnodige updates te voorkomen
+let lastSentData = { nu_naam: "", next_naam: "" };
 
 function scheduleNextSync() {
     const nu = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Amsterdam"}));
@@ -41,7 +44,7 @@ async function syncVirtuagym() {
         if (response.data && response.data.result) {
             lessenCache = response.data.result.filter(e => e.canceled === false).map(e => {
                 const eventDate = new Date(e.start);
-                const displayTitle = e.title || activityNames[e.activity_id] || `Nieuwe les (ID: ${e.activity_id})`;
+                let displayTitle = activityNames[e.activity_id] || (e.title ? e.title.toUpperCase() : `NIEUWE LES`);
 
                 return {
                     ...e,
@@ -80,6 +83,7 @@ async function updateHomeyRotation() {
         next_naam: "GEEN LESSEN", next_tijd: "", next_bezetting: ""
     };
 
+    // Logica voor Bovenste Blok
     if (lessenNu.length > 0) {
         let l = lessenNu[roulatieIndex % lessenNu.length];
         data.nu_status = "LIVE"; data.nu_naam = l.display_title; data.nu_tijd = `${l.start_tijd} - ${l.eind_tijd}`;
@@ -88,38 +92,42 @@ async function updateHomeyRotation() {
         if (diff <= 60) {
             let l = lessenNext[roulatieIndex % lessenNext.length];
             data.nu_status = "VOLGENDE"; data.nu_naam = l.display_title; data.nu_tijd = `${l.start_tijd} - ${l.eind_tijd}`;
-            
-            // BOVENSTE BLOK: Maximaal 9
             let v_nu = l.max_places - l.attendees;
             data.nu_vrij = v_nu > 9 ? 9 : (v_nu < 0 ? 0 : v_nu);
         }
     }
 
+    // Logica voor Onderste Blok
     let bron = (lessenNu.length > 0 || data.nu_status === "VOLGENDE") ? (lessenAfterNext.length > 0 ? lessenAfterNext : lessenNext) : lessenNext;
     if (bron && bron.length > 0) {
         let l = bron[roulatieIndex % bron.length];
         let v_orig = l.max_places - l.attendees;
-        
-        // ONDERSTE BLOK: Maximaal 9
         let v_next = v_orig > 9 ? 9 : (v_orig < 0 ? 0 : v_orig);
         
         data.next_naam = l.display_title; 
         data.next_tijd = `${l.start_tijd} - ${l.eind_tijd}`;
-        
-        if (v_next <= 0) {
-            data.next_bezetting = "VOLGEBOEKT";
-        } else if (v_next === 1) {
-            data.next_bezetting = "NOG 1 PLEK VRIJ";
-        } else {
-            data.next_bezetting = `NOG ${v_next} PLEKKEN VRIJ`;
-        }
+        data.next_bezetting = v_next <= 0 ? "VOLGEBOEKT" : (v_next === 1 ? "NOG 1 PLEK VRIJ" : `NOG ${v_next} PLEKKEN VRIJ`);
     }
 
-    if (HOMEY_URL) {
-        try { 
-            await axios.get(HOMEY_URL, { params: { tag: JSON.stringify(data) } }); 
-            console.log(`[${nuDate.toLocaleTimeString('nl-NL')}] Update verzonden.`);
-        } catch (e) { console.error("Homey Error"); }
+    // --- SLIMME UPDATE CHECK ---
+    // We sturen alleen als:
+    // 1. De naam van de huidige of volgende les echt is veranderd t.o.v. de vorige verzending
+    // 2. Er meer dan 1 les tegelijk is (want dan moeten we rouleren om de 20 sec)
+    const moetRoulatieNu = (lessenNu.length > 1);
+    const moetRoulatieNext = (bron.length > 1);
+    const naamVeranderd = (data.nu_naam !== lastSentData.nu_naam || data.next_naam !== lastSentData.next_naam);
+
+    if (naamVeranderd || moetRoulatieNu || moetRoulatieNext) {
+        if (HOMEY_URL) {
+            try { 
+                await axios.get(HOMEY_URL, { params: { tag: JSON.stringify(data) } }); 
+                console.log(`[${nuDate.toLocaleTimeString('nl-NL')}] Update verzonden: ${data.nu_naam} | ${data.next_naam}`);
+                lastSentData = { nu_naam: data.nu_naam, next_naam: data.next_naam };
+            } catch (e) { console.error("Homey Error"); }
+        }
+    } else {
+        // Geen log in de console om de logs schoon te houden, of eventueel:
+        // console.log("Geen wijziging, update overgeslagen.");
     }
 }
 
