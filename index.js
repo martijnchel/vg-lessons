@@ -6,7 +6,7 @@ const PORT = process.env.PORT || 3000;
 const { CLUB_ID, API_KEY, CLUB_SECRET, HOMEY_URL } = process.env;
 
 const activityNames = {
-    "595083": "Buikspierkwartier", "595096": "SportYV wandelend", "594693": "Spinning",
+    "595083": "Buikspierkwartier", "595096": "SportYV wandelen", "594693": "Spinning",
     "594694": "Pilates", "595082": "Boksfit", "589058": "Fitcircuit",
     "594700": "50-Fit", "595091": "HIIT", "594697": "Spinning",
     "594699": "Flow Yoga", "595095": "60+ Kracht en Balans", "594706": "BodyBalance",
