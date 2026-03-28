@@ -15,7 +15,6 @@ const activityNames = {
 };
 
 let lessenCache = [];
-let nextSyncTimeout;
 
 async function syncVirtuagym() {
     try {
@@ -41,16 +40,8 @@ async function syncVirtuagym() {
             });
             console.log(`[${new Date().toLocaleTimeString('nl-NL')}] Sync OK.`);
         }
-    } catch (e) { console.error("Sync Error:", e.message); }
-    scheduleNextSync();
-}
-
-function scheduleNextSync() {
-    const nu = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Amsterdam"}));
-    const tijdDecimaal = nu.getHours() + (nu.getMinutes() / 60);
-    const isPiek = (tijdDecimaal >= 6.5 && tijdDecimaal < 12) || (tijdDecimaal >= 17 && tijdDecimaal < 21.5);
-    if (nextSyncTimeout) clearTimeout(nextSyncTimeout);
-    nextSyncTimeout = setTimeout(syncVirtuagym, isPiek ? 300000 : 900000);
+    } catch (e) { console.error("Sync Error"); }
+    setTimeout(syncVirtuagym, 600000); 
 }
 
 async function updateHomeyRotation() {
@@ -71,29 +62,29 @@ async function updateHomeyRotation() {
     let lessenAfterNext = tweedeLes ? alleToekomstig.filter(l => l.start_tijd === tweedeLes.start_tijd && l.is_vandaag === tweedeLes.is_vandaag) : [];
 
     let data = {
-        nu_status: "VRIJ", nu_naam: "VRIJ TRAINEN", nu_tijd: "", nu_promo_bezetting: "",
-        nu_promo_visible: "false",
+        nu_status: "VRIJ", nu_naam: "VRIJ TRAINEN", nu_tijd: "", nu_vrij: 0,
         next_naam: "GEEN LESSEN", next_tijd: "", next_bezetting: ""
     };
 
+    // BOVENSTE VAK: Puur getal voor jouw custom styling
     if (lessenNu.length > 0) {
         let l = lessenNu[roulatieIndex % lessenNu.length];
         data.nu_status = "LIVE"; 
         data.nu_naam = l.display_title; 
         data.nu_tijd = `${l.start_tijd} - ${l.eind_tijd}`;
+        data.nu_vrij = 0;
     } else if (eerstvolgendeTijd && eerstvolgendeDatum) {
         const diff = Math.round((alleToekomstig[0].full_start - nuDate.getTime()) / 1000 / 60);
         if (diff <= 60) {
             let l = lessenNext[roulatieIndex % lessenNext.length];
-            const vrij = l.max_places - l.attendees;
             data.nu_status = "VOLGENDE"; 
             data.nu_naam = l.display_title; 
             data.nu_tijd = `${l.start_tijd} - ${l.eind_tijd}`;
-            data.nu_promo_bezetting = vrij <= 0 ? "VOLGEBOEKT" : `NOG ${vrij} PLEKKEN VRIJ`;
-            data.nu_promo_visible = "true";
+            data.nu_vrij = l.max_places - l.attendees; // Alleen het getal
         }
     }
 
+    // ONDERSTE VAK: Kant-en-klare zin
     let bron = (lessenNu.length > 0 || data.nu_status === "VOLGENDE") ? (lessenAfterNext.length > 0 ? lessenAfterNext : lessenNext) : lessenNext;
     if (bron && bron.length > 0) {
         let l = bron[roulatieIndex % bron.length];
