@@ -17,14 +17,13 @@ const activityNames = {
 let lessenCache = [];
 let nextSyncTimeout;
 
-// Slimme planning voor de volgende synchronisatie
+// 1. Slimme planning voor Virtuagym Sync (5 of 15 min)
 function scheduleNextSync() {
     const nu = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Amsterdam"}));
     const tijdDecimaal = nu.getHours() + (nu.getMinutes() / 60);
 
-    // PIEKUREN: 06:30-12:00 en 17:00-21:30
     const isPiek = (tijdDecimaal >= 6.5 && tijdDecimaal < 12) || (tijdDecimaal >= 17 && tijdDecimaal < 21.5);
-    const interval = isPiek ? 300000 : 900000; // 5 min vs 15 min
+    const interval = isPiek ? 300000 : 900000; 
 
     if (nextSyncTimeout) clearTimeout(nextSyncTimeout);
     nextSyncTimeout = setTimeout(syncVirtuagym, interval);
@@ -32,6 +31,7 @@ function scheduleNextSync() {
     console.log(`[${nu.toLocaleTimeString('nl-NL')}] Volgende Virtuagym sync over ${interval/60000} minuten.`);
 }
 
+// 2. Data ophalen bij Virtuagym
 async function syncVirtuagym() {
     try {
         const nuNL = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Amsterdam"}));
@@ -54,7 +54,7 @@ async function syncVirtuagym() {
                     full_start: eventDate
                 };
             });
-            console.log(`[${new Date().toLocaleTimeString('nl-NL')}] Sync OK. ${lessenCache.length} lessen ingeladen.`);
+            console.log(`[${new Date().toLocaleTimeString('nl-NL')}] Sync OK. ${lessenCache.length} lessen geladen.`);
         }
     } catch (e) { 
         console.error("Sync Error:", e.message); 
@@ -62,8 +62,12 @@ async function syncVirtuagym() {
     scheduleNextSync();
 }
 
+// 3. Data voorbereiden en naar Homey sturen
 async function updateHomeyRotation() {
-    if (lessenCache.length === 0) return;
+    if (lessenCache.length === 0) {
+        console.log("Geen lessen in cache, skip update.");
+        return;
+    }
 
     const nuDate = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Amsterdam"}));
     const nuStr = nuDate.toLocaleTimeString("nl-NL", {hour: '2-digit', minute: '2-digit', hour12: false});
@@ -84,13 +88,11 @@ async function updateHomeyRotation() {
         next_naam: "GEEN LESSEN", next_tijd: "", next_bezetting: ""
     };
 
-    // BOVENSTE VAK
     if (lessenNu.length > 0) {
         let l = lessenNu[roulatieIndex % lessenNu.length];
         data.nu_status = "LIVE"; 
         data.nu_naam = l.display_title; 
         data.nu_tijd = `${l.start_tijd} - ${l.eind_tijd}`;
-        data.nu_vrij = 0;
     } else if (eerstvolgendeTijd && eerstvolgendeDatum) {
         const diff = Math.round((alleToekomstig[0].full_start - nuDate.getTime()) / 1000 / 60);
         if (diff <= 60) {
@@ -102,7 +104,6 @@ async function updateHomeyRotation() {
         }
     }
 
-    // ONDERSTE VAK
     let bron = (lessenNu.length > 0 || data.nu_status === "VOLGENDE") ? (lessenAfterNext.length > 0 ? lessenAfterNext : lessenNext) : lessenNext;
     if (bron && bron.length > 0) {
         let l = bron[roulatieIndex % bron.length];
@@ -113,12 +114,24 @@ async function updateHomeyRotation() {
     }
 
     if (HOMEY_URL) {
-        try { await axios.get(HOMEY_URL, { params: { tag: "yvsport_data", value: JSON.stringify(data) } }); } 
-        catch (e) { console.error("Homey Update Error"); }
+        try { 
+            await axios.get(HOMEY_URL, { params: { tag: "yvsport_data", value: JSON.stringify(data) } }); 
+            console.log(`[${nuDate.toLocaleTimeString('nl-NL')}] Update verzonden naar Homey.`);
+        } catch (e) { 
+            console.error("Homey Update Error:", e.message); 
+        }
     }
 }
 
-app.listen(PORT, () => { 
-    syncVirtuagym(); 
-    setInterval(updateHomeyRotation, 20000); 
+// 4. Server starten en loops activeren
+app.listen(PORT, async () => {
+    console.log(`[${new Date().toLocaleTimeString('nl-NL')}] Server draait op poort ${PORT}`);
+    
+    // Eerste sync direct uitvoeren
+    await syncVirtuagym();
+    
+    // Elke 20 seconden data naar Homey sturen
+    setInterval(() => {
+        updateHomeyRotation();
+    }, 20000);
 });
