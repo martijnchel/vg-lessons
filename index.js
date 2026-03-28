@@ -41,8 +41,6 @@ async function syncVirtuagym() {
         if (response.data && response.data.result) {
             lessenCache = response.data.result.filter(e => e.canceled === false).map(e => {
                 const eventDate = new Date(e.start);
-                
-                // Placeholder aangepast om het ID te tonen als de naam ontbreekt
                 const displayTitle = e.title || activityNames[e.activity_id] || `Nieuwe les (ID: ${e.activity_id})`;
 
                 return {
@@ -90,23 +88,30 @@ async function updateHomeyRotation() {
         if (diff <= 60) {
             let l = lessenNext[roulatieIndex % lessenNext.length];
             data.nu_status = "VOLGENDE"; data.nu_naam = l.display_title; data.nu_tijd = `${l.start_tijd} - ${l.eind_tijd}`;
-            data.nu_vrij = l.max_places - l.attendees;
+            
+            // BOVENSTE BLOK: Maximaal 9
+            let v_nu = l.max_places - l.attendees;
+            data.nu_vrij = v_nu > 9 ? 9 : (v_nu < 0 ? 0 : v_nu);
         }
     }
 
     let bron = (lessenNu.length > 0 || data.nu_status === "VOLGENDE") ? (lessenAfterNext.length > 0 ? lessenAfterNext : lessenNext) : lessenNext;
     if (bron && bron.length > 0) {
         let l = bron[roulatieIndex % bron.length];
-        const vrij = l.max_places - l.attendees;
+        let v_orig = l.max_places - l.attendees;
+        
+        // ONDERSTE BLOK: Maximaal 9
+        let v_next = v_orig > 9 ? 9 : (v_orig < 0 ? 0 : v_orig);
+        
         data.next_naam = l.display_title; 
         data.next_tijd = `${l.start_tijd} - ${l.eind_tijd}`;
         
-        if (vrij <= 0) {
+        if (v_next <= 0) {
             data.next_bezetting = "VOLGEBOEKT";
-        } else if (vrij === 1) {
+        } else if (v_next === 1) {
             data.next_bezetting = "NOG 1 PLEK VRIJ";
         } else {
-            data.next_bezetting = `NOG ${vrij} PLEKKEN VRIJ`;
+            data.next_bezetting = `NOG ${v_next} PLEKKEN VRIJ`;
         }
     }
 
