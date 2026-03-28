@@ -41,10 +41,14 @@ async function syncVirtuagym() {
         if (response.data && response.data.result) {
             lessenCache = response.data.result.filter(e => e.canceled === false).map(e => {
                 const eventDate = new Date(e.start);
+                
+                // Placeholder aangepast om het ID te tonen als de naam ontbreekt
+                const displayTitle = e.title || activityNames[e.activity_id] || `Nieuwe les (ID: ${e.activity_id})`;
+
                 return {
                     ...e,
                     is_vandaag: eventDate.getDate() === nuNL.getDate(),
-                    display_title: e.title || activityNames[e.activity_id] || "Extra groepsles",
+                    display_title: displayTitle,
                     start_tijd: e.start.split(' ')[1].substring(0, 5),
                     eind_tijd: e.end.split(' ')[1].substring(0, 5),
                     full_start: eventDate
