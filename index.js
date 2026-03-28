@@ -15,6 +15,22 @@ const activityNames = {
 };
 
 let lessenCache = [];
+let nextSyncTimeout;
+
+// Slimme planning voor de volgende synchronisatie
+function scheduleNextSync() {
+    const nu = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Amsterdam"}));
+    const tijdDecimaal = nu.getHours() + (nu.getMinutes() / 60);
+
+    // PIEKUREN: 06:30-12:00 en 17:00-21:30
+    const isPiek = (tijdDecimaal >= 6.5 && tijdDecimaal < 12) || (tijdDecimaal >= 17 && tijdDecimaal < 21.5);
+    const interval = isPiek ? 300000 : 900000; // 5 min vs 15 min
+
+    if (nextSyncTimeout) clearTimeout(nextSyncTimeout);
+    nextSyncTimeout = setTimeout(syncVirtuagym, interval);
+    
+    console.log(`[${nu.toLocaleTimeString('nl-NL')}] Volgende Virtuagym sync over ${interval/60000} minuten.`);
+}
 
 async function syncVirtuagym() {
     try {
@@ -38,10 +54,12 @@ async function syncVirtuagym() {
                     full_start: eventDate
                 };
             });
-            console.log(`[${new Date().toLocaleTimeString('nl-NL')}] Sync OK.`);
+            console.log(`[${new Date().toLocaleTimeString('nl-NL')}] Sync OK. ${lessenCache.length} lessen ingeladen.`);
         }
-    } catch (e) { console.error("Sync Error"); }
-    setTimeout(syncVirtuagym, 600000); 
+    } catch (e) { 
+        console.error("Sync Error:", e.message); 
+    }
+    scheduleNextSync();
 }
 
 async function updateHomeyRotation() {
@@ -66,7 +84,7 @@ async function updateHomeyRotation() {
         next_naam: "GEEN LESSEN", next_tijd: "", next_bezetting: ""
     };
 
-    // BOVENSTE VAK: Puur getal voor jouw custom styling
+    // BOVENSTE VAK
     if (lessenNu.length > 0) {
         let l = lessenNu[roulatieIndex % lessenNu.length];
         data.nu_status = "LIVE"; 
@@ -80,11 +98,11 @@ async function updateHomeyRotation() {
             data.nu_status = "VOLGENDE"; 
             data.nu_naam = l.display_title; 
             data.nu_tijd = `${l.start_tijd} - ${l.eind_tijd}`;
-            data.nu_vrij = l.max_places - l.attendees; // Alleen het getal
+            data.nu_vrij = l.max_places - l.attendees;
         }
     }
 
-    // ONDERSTE VAK: Kant-en-klare zin
+    // ONDERSTE VAK
     let bron = (lessenNu.length > 0 || data.nu_status === "VOLGENDE") ? (lessenAfterNext.length > 0 ? lessenAfterNext : lessenNext) : lessenNext;
     if (bron && bron.length > 0) {
         let l = bron[roulatieIndex % bron.length];
@@ -96,8 +114,11 @@ async function updateHomeyRotation() {
 
     if (HOMEY_URL) {
         try { await axios.get(HOMEY_URL, { params: { tag: "yvsport_data", value: JSON.stringify(data) } }); } 
-        catch (e) { console.error("Homey Error"); }
+        catch (e) { console.error("Homey Update Error"); }
     }
 }
 
-app.listen(PORT, () => { syncVirtuagym(); setInterval(updateHomeyRotation, 20000); });
+app.listen(PORT, () => { 
+    syncVirtuagym(); 
+    setInterval(updateHomeyRotation, 20000); 
+});
