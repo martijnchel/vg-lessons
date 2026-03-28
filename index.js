@@ -95,16 +95,13 @@ async function updateHomeyRotation() {
         let l = bron[roulatieIndex % bron.length];
         const vrij = l.max_places - l.attendees;
         data.next_naam = l.display_title; 
-        data.next_tijd = (l.is_vandaag ? "" : "MORGEN ") + `${l.start_tijd} - ${l.eind_tijd}`;
+        data.next_tijd = `${l.start_tijd} - ${l.eind_tijd}`; // Alleen tijdstip
         data.next_bezetting = vrij <= 0 ? "VOLGEBOEKT" : `NOG ${vrij} PLEKKEN VRIJ`;
     }
 
     if (HOMEY_URL) {
         try { 
-            // We sturen de data exact zo als in jouw werkende test-link
-            await axios.get(HOMEY_URL, { 
-                params: { tag: JSON.stringify(data) } 
-            }); 
+            await axios.get(HOMEY_URL, { params: { tag: JSON.stringify(data) } }); 
             console.log(`[${nuDate.toLocaleTimeString('nl-NL')}] Update verzonden.`);
         } catch (e) { console.error("Homey Error"); }
     }
