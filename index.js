@@ -1,23 +1,11 @@
-const express = require('express');
-const axios = require('axios');
-const app = express();
+// --- VERBETERDE SYNC FUNCTIE MET TIJDZONE EN TITEL-FIX ---
 
-const PORT = process.env.PORT || 3000;
-const UPDATE_INTERVAL_MS = 5 * 60 * 1000; // Elke 5 min sync voor bezetting
-
-// Environment Variables van Railway
-const CLUB_ID = process.env.CLUB_ID;
-const API_KEY = process.env.API_KEY;
-const CLUB_SECRET = process.env.CLUB_SECRET;
-const HOMEY_URL = process.env.HOMEY_URL; 
-
-let lessenCache = [];
-
-// API Sync Functie
 async function syncVirtuagym() {
     try {
-        const start = Math.floor(new Date().setHours(0,0,0,0) / 1000);
-        const end = Math.floor(new Date().setHours(23,59,59,999) / 1000);
+        // We halen data op voor vandaag
+        const nuNL = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Amsterdam"}));
+        const start = Math.floor(nuNL.setHours(0,0,0,0) / 1000);
+        const end = Math.floor(nuNL.setHours(23,59,59,999) / 1000);
 
         const response = await axios.get(`https://api.virtuagym.com/api/v1/club/${CLUB_ID}/events`, {
             params: {
@@ -29,38 +17,51 @@ async function syncVirtuagym() {
         });
 
         if (response.data && response.data.result) {
-            lessenCache = response.data.result.filter(e => e.canceled === false);
-            console.log(`[${new Date().toISOString()}] Sync succesvol: ${lessenCache.length} lessen.`);
+            lessenCache = response.data.result.filter(e => e.canceled === false).map(e => {
+                // TITEL FIX: Gebruik title, anders activity_name (indien aanwezig), anders fallback
+                let naam = e.title || e.activity_name || "Groepsles";
+                
+                // Soms zit de naam diep in de API response verstopt, we loggen het even in de console
+                if (!e.title) console.log("Les gevonden zonder titel, ID:", e.event_id);
+
+                return {
+                    ...e,
+                    display_title: naam,
+                    start_tijd: e.start.split(' ')[1].substring(0, 5),
+                    eind_tijd: e.end.split(' ')[1].substring(0, 5)
+                };
+            });
+            console.log(`[SYNC] ${lessenCache.length} lessen verwerkt.`);
         }
     } catch (e) {
         console.error("Sync Error:", e.message);
     }
 }
 
-// Debug pagina om live data te zien
+// --- VERBETERDE DEBUG PAGINA ---
 app.get('/check', (req, res) => {
-    const nu = new Date();
-    const tijdNu = nu.getHours().toString().padStart(2, '0') + ":" + nu.getMinutes().toString().padStart(2, '0');
-    
-    let html = `<html><body style="font-family:sans-serif; background:#121212; color:white; padding:40px;">`;
-    html += `<h1>YVSPORT Lessons Debug</h1><p>Tijd: ${tijdNu}</p><table border="1" cellpadding="10" style="border-collapse:collapse; width:100%;">`;
-    html += `<tr style="background:#333;"><th>Tijd</th><th>Les</th><th>Bezetting</th><th>Status</th></tr>`;
-    
-    lessenCache.forEach(l => {
-        const s = l.start.split(' ')[1].substring(0, 5);
-        const e = l.end.split(' ')[1].substring(0, 5);
-        const isNu = tijdNu >= s && tijdNu < e;
-        html += `<tr style="color:${isNu ? '#00FF00' : 'white'}"><td>${s}-${e}</td><td>${l.title}</td><td>${l.attendees}/${l.max_places}</td><td>${isNu ? 'NU BEZIG' : 'GEPLAND'}</td></tr>`;
+    // Huidige tijd in NL FORCEREN
+    const tijdNu = new Date().toLocaleTimeString("nl-NL", {
+        timeZone: "Europe/Amsterdam",
+        hour: '2-digit',
+        minute: '2-digit'
     });
     
-    html += `</table></body></html>`;
+    let html = `<html><body style="font-family:sans-serif; background:#121212; color:white; padding:40px;">`;
+    html += `<h1>YVSPORT Lessons Debug</h1><p>Huidige tijd (NL): <strong>${tijdNu}</strong></p>`;
+    html += `<table border="1" cellpadding="10" style="border-collapse:collapse; width:100%;">`;
+    html += `<tr style="background:#333;"><th>Tijd</th><th>Les (Display Title)</th><th>Bezetting</th><th>Status</th></tr>`;
+    
+    lessenCache.forEach(l => {
+        const isNu = tijdNu >= l.start_tijd && tijdNu < l.eind_tijd;
+        html += `<tr style="color:${isNu ? '#00FF00' : 'white'}">
+                    <td>${l.start_tijd}-${l.eind_tijd}</td>
+                    <td>${l.display_title}</td>
+                    <td>${l.attendees}/${l.max_places}</td>
+                    <td>${isNu ? '<strong>NU BEZIG</strong>' : 'GEPLAND'}</td>
+                 </tr>`;
+    });
+    
+    html += `</table><p style="color:gray; font-size:0.8em;">Ps: Als de namen nog steeds leeg zijn, laat het me weten. Dan vissen we ze uit de 'Activity Definition'.</p></body></html>`;
     res.send(html);
-});
-
-app.get('/', (req, res) => res.send('YVSPORT Lessons Service Online. Go to /check for data.'));
-
-app.listen(PORT, () => {
-    console.log(`Server gestart op poort ${PORT}`);
-    syncVirtuagym();
-    setInterval(syncVirtuagym, UPDATE_INTERVAL_MS);
 });
