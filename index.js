@@ -20,7 +20,6 @@ let nextSyncTimeout;
 async function syncVirtuagym() {
     try {
         const nuNL = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Amsterdam"}));
-        // We pakken de start van vandaag tot het einde van morgen (48 uur window)
         const start = Math.floor(new Date(nuNL).setHours(0,0,0,0) / 1000);
         const end = start + (2 * 24 * 60 * 60) - 1; 
 
@@ -40,7 +39,7 @@ async function syncVirtuagym() {
                     full_start: eventDate
                 };
             });
-            console.log(`[${new Date().toLocaleTimeString('nl-NL', {timeZone: 'Europe/Amsterdam'})}] Sync (Vandaag+Morgen) OK.`);
+            console.log(`[${new Date().toLocaleTimeString('nl-NL', {timeZone: 'Europe/Amsterdam'})}] Sync OK.`);
         }
     } catch (e) { console.error("Sync Error:", e.message); }
     scheduleNextSync();
@@ -62,17 +61,13 @@ async function updateHomeyRotation() {
     const seconden = nuDate.getSeconds();
     const roulatieIndex = Math.floor(seconden / 20);
 
-    // 1. Lessen die NU bezig zijn (alleen vandaag)
     let lessenNu = lessenCache.filter(l => l.is_vandaag && nuStr >= l.start_tijd && nuStr < l.eind_tijd);
-    
-    // 2. Alle lessen in de toekomst (vandaag + morgen)
     let alleToekomstig = lessenCache.filter(l => l.full_start > nuDate).sort((a,b) => a.full_start - b.full_start);
     
     let eerstvolgendeTijd = alleToekomstig.length > 0 ? alleToekomstig[0].start_tijd : null;
     let eerstvolgendeDatum = alleToekomstig.length > 0 ? alleToekomstig[0].is_vandaag : true;
     let lessenNext = alleToekomstig.filter(l => l.start_tijd === eerstvolgendeTijd && l.is_vandaag === eerstvolgendeDatum);
 
-    // 3. De les na de eerstvolgende
     let tweedeLes = alleToekomstig.find(l => l.start_tijd !== eerstvolgendeTijd || l.is_vandaag !== eerstvolgendeDatum);
     let lessenAfterNext = tweedeLes ? alleToekomstig.filter(l => l.start_tijd === tweedeLes.start_tijd && l.is_vandaag === tweedeLes.is_vandaag) : [];
 
@@ -85,7 +80,6 @@ async function updateHomeyRotation() {
             await sendTag("Les_Nu_Tijd", `${lesNu.start_tijd} - ${lesNu.eind_tijd}`);
             await sendTag("Les_Nu_Bezetting", `BEZETTING: ${lesNu.attendees}/${lesNu.max_places}`);
         } else if (eerstvolgendeTijd && eerstvolgendeDatum) {
-            // Check of volgende les VANDAAG binnen 60 min begint
             const diff = (alleToekomstig[0].full_start - nuDate.getTime()) / 1000 / 60;
             if (diff <= 60) {
                 let lesPromoot = lessenNext[roulatieIndex % lessenNext.length];
@@ -96,8 +90,8 @@ async function updateHomeyRotation() {
             } else {
                 await sendTag("Les_Nu_Status", "VRIJ");
                 await sendTag("Les_Nu_Naam", "VRIJ TRAINEN");
-                await sendTag("Les_Nu_Tijd", "");
-                await sendTag("Les_Nu_Bezetting", "");
+                await sendTag("Les_Nu_Tijd", ""); // TIJD LEEG BIJ VRIJ TRAINEN
+                await sendTag("Les_Nu_Bezetting", ""); // BEZETTING LEEG BIJ VRIJ TRAINEN
             }
         } else {
             await sendTag("Les_Nu_Status", "VRIJ");
@@ -106,7 +100,7 @@ async function updateHomeyRotation() {
             await sendTag("Les_Nu_Bezetting", "");
         }
 
-        // --- ONDERSTE VAK (Altijd gevuld, ook met morgen) ---
+        // --- ONDERSTE VAK ---
         let bronLijst = (lessenNu.length > 0 || (eerstvolgendeDatum && (alleToekomstig[0].full_start - nuDate.getTime()) / 1000 / 60 <= 60)) 
                         ? lessenNext : (lessenAfterNext.length > 0 ? lessenAfterNext : lessenNext);
         
