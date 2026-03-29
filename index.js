@@ -17,7 +17,7 @@ const activityNames = {
 let lessenCache = [];
 let nextSyncTimeout;
 
-// Geheugen om onnodige updates te voorkomen
+// Geheugen om onnodige updates naar Homey te voorkomen
 let lastSentData = { nu_naam: "", next_naam: "" };
 
 function scheduleNextSync() {
@@ -44,6 +44,7 @@ async function syncVirtuagym() {
         if (response.data && response.data.result) {
             lessenCache = response.data.result.filter(e => e.canceled === false).map(e => {
                 const eventDate = new Date(e.start);
+                // Naam ophalen en naar hoofdletters omzetten
                 let displayTitle = activityNames[e.activity_id] || (e.title ? e.title.toUpperCase() : `NIEUWE LES`);
 
                 return {
@@ -78,41 +79,50 @@ async function updateHomeyRotation() {
     let tweedeLes = alleToekomstig.find(l => l.start_tijd !== eerstvolgendeTijd || l.is_vandaag !== eerstvolgendeDatum);
     let lessenAfterNext = tweedeLes ? alleToekomstig.filter(l => l.start_tijd === tweedeLes.start_tijd && l.is_vandaag === tweedeLes.is_vandaag) : [];
 
+    // Standaardwaarden (Bold)
     let data = {
-        nu_status: "VRIJ", nu_naam: "VRIJ TRAINEN", nu_tijd: "", nu_vrij: 0,
-        next_naam: "GEEN LESSEN", next_tijd: "", next_bezetting: ""
+        nu_status: "VRIJ", 
+        nu_naam: "*VRIJ TRAINEN*", 
+        nu_tijd: "", 
+        nu_vrij: 0,
+        next_naam: "*GEEN LESSEN*", 
+        next_tijd: "", 
+        next_bezetting: ""
     };
 
-    // Logica voor Bovenste Blok
+    // --- Logica voor Bovenste Blok ---
     if (lessenNu.length > 0) {
         let l = lessenNu[roulatieIndex % lessenNu.length];
-        data.nu_status = "LIVE"; data.nu_naam = l.display_title; data.nu_tijd = `${l.start_tijd} - ${l.eind_tijd}`;
+        data.nu_status = "LIVE"; 
+        data.nu_naam = `*${l.display_title}*`;
+        data.nu_tijd = `${l.start_tijd} - ${l.eind_tijd}`;
     } else if (eerstvolgendeTijd && eerstvolgendeDatum) {
         const diff = Math.round((alleToekomstig[0].full_start - nuDate.getTime()) / 1000 / 60);
         if (diff <= 60) {
             let l = lessenNext[roulatieIndex % lessenNext.length];
-            data.nu_status = "VOLGENDE"; data.nu_naam = l.display_title; data.nu_tijd = `${l.start_tijd} - ${l.eind_tijd}`;
+            data.nu_status = "VOLGENDE"; 
+            data.nu_naam = `*${l.display_title}*`;
+            data.nu_tijd = `${l.start_tijd} - ${l.eind_tijd}`;
             let v_nu = l.max_places - l.attendees;
             data.nu_vrij = v_nu > 9 ? 9 : (v_nu < 0 ? 0 : v_nu);
         }
     }
 
-    // Logica voor Onderste Blok
+    // --- Logica voor Onderste Blok ---
     let bron = (lessenNu.length > 0 || data.nu_status === "VOLGENDE") ? (lessenAfterNext.length > 0 ? lessenAfterNext : lessenNext) : lessenNext;
     if (bron && bron.length > 0) {
         let l = bron[roulatieIndex % bron.length];
         let v_orig = l.max_places - l.attendees;
         let v_next = v_orig > 9 ? 9 : (v_orig < 0 ? 0 : v_orig);
         
-        data.next_naam = l.display_title; 
+        data.next_naam = `*${l.display_title}*`; 
         data.next_tijd = `${l.start_tijd} - ${l.eind_tijd}`;
-        data.next_bezetting = v_next <= 0 ? "VOLGEBOEKT" : (v_next === 1 ? "NOG 1 PLEK VRIJ" : `NOG ${v_next} PLEKKEN VRIJ`);
+        
+        let b_tekst = v_next <= 0 ? "VOLGEBOEKT" : (v_next === 1 ? "NOG 1 PLEK VRIJ" : `NOG ${v_next} PLEKKEN VRIJ`);
+        data.next_bezetting = `*${b_tekst}*`;
     }
 
     // --- SLIMME UPDATE CHECK ---
-    // We sturen alleen als:
-    // 1. De naam van de huidige of volgende les echt is veranderd t.o.v. de vorige verzending
-    // 2. Er meer dan 1 les tegelijk is (want dan moeten we rouleren om de 20 sec)
     const moetRoulatieNu = (lessenNu.length > 1);
     const moetRoulatieNext = (bron.length > 1);
     const naamVeranderd = (data.nu_naam !== lastSentData.nu_naam || data.next_naam !== lastSentData.next_naam);
@@ -125,9 +135,6 @@ async function updateHomeyRotation() {
                 lastSentData = { nu_naam: data.nu_naam, next_naam: data.next_naam };
             } catch (e) { console.error("Homey Error"); }
         }
-    } else {
-        // Geen log in de console om de logs schoon te houden, of eventueel:
-        // console.log("Geen wijziging, update overgeslagen.");
     }
 }
 
