@@ -18,20 +18,23 @@ let lessenCache = [];
 let nextSyncTimeout;
 let lastSentData = { nu_naam: "", next_naam: "" };
 
+function getAmsterdamDate() {
+    return new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Amsterdam"}));
+}
+
 function scheduleNextSync() {
-    const nu = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Amsterdam"}));
+    const nu = getAmsterdamDate();
     const tijdDecimaal = nu.getHours() + (nu.getMinutes() / 60);
     const isPiek = (tijdDecimaal >= 6.5 && tijdDecimaal < 12) || (tijdDecimaal >= 17 && tijdDecimaal < 21.5);
     const interval = isPiek ? 300000 : 900000; 
 
     if (nextSyncTimeout) clearTimeout(nextSyncTimeout);
     nextSyncTimeout = setTimeout(syncVirtuagym, interval);
-    console.log(`[${nu.toLocaleTimeString('nl-NL')}] Volgende sync over ${interval/60000} min.`);
 }
 
 async function syncVirtuagym() {
     try {
-        const nuNL = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Amsterdam"}));
+        const nuNL = getAmsterdamDate();
         const start = Math.floor(new Date(nuNL).setHours(0,0,0,0) / 1000);
         const end = start + (2 * 24 * 60 * 60) - 1; 
 
@@ -41,18 +44,20 @@ async function syncVirtuagym() {
 
         if (response.data && response.data.result) {
             lessenCache = response.data.result.filter(e => e.canceled === false).map(e => {
-                const eventDate = new Date(e.start);
-                let displayTitle = activityNames[e.activity_id] || (e.title ? e.title.toUpperCase() : `NIEUWE LES`);
+                // Forceer de datum naar een NL tijdstip om tijdzone-verschuiving te voorkomen
+                const t = e.start.split(/[- :]/);
+                const eventDate = new Date(t[0], t[1]-1, t[2], t[3], t[4], t[5] || 0);
+
                 return {
                     ...e,
                     is_vandaag: eventDate.getDate() === nuNL.getDate(),
-                    display_title: displayTitle,
+                    display_title: activityNames[e.activity_id] || (e.title ? e.title.toUpperCase() : `ID: ${e.activity_id}`),
                     start_tijd: e.start.split(' ')[1].substring(0, 5),
                     eind_tijd: e.end.split(' ')[1].substring(0, 5),
                     full_start: eventDate
                 };
             });
-            console.log(`[${new Date().toLocaleTimeString('nl-NL')}] Sync OK.`);
+            console.log(`[${new Date().toLocaleTimeString('nl-NL')}] Sync OK. Totaal: ${lessenCache.length} lessen.`);
         }
     } catch (e) { console.error("Sync Error"); }
     scheduleNextSync();
@@ -61,24 +66,21 @@ async function syncVirtuagym() {
 async function updateHomeyRotation() {
     if (lessenCache.length === 0) return;
 
-    const nuDate = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Amsterdam"}));
+    const nuDate = getAmsterdamDate();
     const nuStr = nuDate.toLocaleTimeString("nl-NL", {hour: '2-digit', minute: '2-digit', hour12: false});
     const roulatieIndex = Math.floor(nuDate.getSeconds() / 20);
 
-    // 1. Zoek lessen die NU bezig zijn
-    let lessenNu = lessenCache.filter(l => l.is_vandaag && nuStr >= l.start_tijd && nuStr < l.eind_tijd);
-
-    // 2. Zoek ALLE lessen die in de toekomst liggen (vanaf nu)
+    // Pak lessen die nu bezig zijn of nog moeten komen (met buffer van 1 minuut)
     let alleToekomstig = lessenCache
-        .filter(l => l.full_start.getTime() > (nuDate.getTime() - 60000)) // 1 minuut marge
+        .filter(l => l.full_start.getTime() > (nuDate.getTime() - 60000)) 
         .sort((a,b) => a.full_start - b.full_start);
 
-    // 3. De EERSTVOLGENDE lesgroep (bijv. de Yoga van 09:30)
+    let lessenNu = lessenCache.filter(l => l.is_vandaag && nuStr >= l.start_tijd && nuStr < l.eind_tijd);
+    
     let eerstvolgendeTijd = alleToekomstig.length > 0 ? alleToekomstig[0].start_tijd : null;
     let eerstvolgendeDatum = alleToekomstig.length > 0 ? alleToekomstig[0].is_vandaag : true;
     let lessenNext = alleToekomstig.filter(l => l.start_tijd === eerstvolgendeTijd && l.is_vandaag === eerstvolgendeDatum);
 
-    // 4. De lesgroep DAARNA (bijv. 10:00)
     let tweedeMoment = alleToekomstig.find(l => l.start_tijd !== eerstvolgendeTijd || l.is_vandaag !== eerstvolgendeDatum);
     let lessenAfterNext = tweedeMoment ? alleToekomstig.filter(l => l.start_tijd === tweedeMoment.start_tijd && l.is_vandaag === tweedeMoment.is_vandaag) : [];
 
@@ -87,7 +89,6 @@ async function updateHomeyRotation() {
         next_naam: "*GEEN LESSEN*", next_tijd: "", next_bezetting: ""
     };
 
-    // BOVENSTE BLOK
     if (lessenNu.length > 0) {
         let l = lessenNu[roulatieIndex % lessenNu.length];
         data.nu_status = "LIVE";
@@ -105,10 +106,10 @@ async function updateHomeyRotation() {
         }
     }
 
-    // ONDERSTE BLOK (Verbeterde logica: pak altijd de eerstvolgende die niet bovenin staat)
-    let bron = (data.nu_status === "LIVE" || data.nu_status === "VOLGENDE") ? (lessenAfterNext.length > 0 ? lessenAfterNext : []) : lessenNext;
+    // De "BRON" voor onderin: als bovenin "LIVE" of "VOLGENDE" staat, pak dan de groep DAARNA.
+    let bron = (data.nu_status === "LIVE" || data.nu_status === "VOLGENDE") ? lessenAfterNext : lessenNext;
     
-    if (bron.length > 0) {
+    if (bron && bron.length > 0) {
         let l = bron[roulatieIndex % bron.length];
         let v_orig = l.max_places - l.attendees;
         let v_next = v_orig > 9 ? 9 : (v_orig < 0 ? 0 : v_orig);
@@ -118,7 +119,7 @@ async function updateHomeyRotation() {
         data.next_bezetting = `*${b_tekst}*`;
     }
 
-    if (data.nu_naam !== lastSentData.nu_naam || data.next_naam !== lastSentData.next_naam || lessenNu.length > 1 || bron.length > 1) {
+    if (data.nu_naam !== lastSentData.nu_naam || data.next_naam !== lastSentData.next_naam || lessenNu.length > 1 || (bron && bron.length > 1)) {
         if (HOMEY_URL) {
             try {
                 await axios.get(HOMEY_URL, { params: { tag: JSON.stringify(data) } });
@@ -130,7 +131,6 @@ async function updateHomeyRotation() {
 }
 
 app.listen(PORT, () => {
-    console.log(`Server gestart op poort ${PORT}`);
     syncVirtuagym();
     setInterval(updateHomeyRotation, 20000);
 });
