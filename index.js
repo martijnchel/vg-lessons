@@ -15,7 +15,6 @@ const activityNames = {
 };
 
 let lessenCache = [];
-let nextSyncTimeout;
 let lastSentData = { nu_naam: "", next_naam: "" };
 
 function getAmsterdamNow() {
@@ -34,10 +33,8 @@ async function syncVirtuagym() {
 
         if (response.data && response.data.result) {
             lessenCache = response.data.result.filter(e => e.canceled === false).map(e => {
-                // Split de string "2024-03-31 09:30:00" handmatig om tijdzone-gezeur te voorkomen
                 const t = e.start.split(/[- :]/);
                 const d = new Date(t[0], t[1]-1, t[2], t[3], t[4]); 
-                
                 return {
                     ...e,
                     full_start: d,
@@ -47,11 +44,10 @@ async function syncVirtuagym() {
                     display_title: activityNames[e.activity_id] || (e.title ? e.title.toUpperCase() : `LES`)
                 };
             });
-            console.log(`Sync OK. ${lessenCache.length} lessen.`);
+            console.log(`[${nuNL.toLocaleTimeString()}] Sync OK: ${lessenCache.length} lessen.`);
         }
     } catch (e) { console.error("Sync Error"); }
     
-    // Schedule next sync
     const nu = getAmsterdamNow();
     const tijd = nu.getHours() + (nu.getMinutes() / 60);
     const interval = ((tijd >= 6.5 && tijd < 12) || (tijd >= 17 && tijd < 21.5)) ? 300000 : 900000;
@@ -63,31 +59,34 @@ async function updateHomeyRotation() {
 
     const nuDate = getAmsterdamNow();
     const nuStr = nuDate.toLocaleTimeString("nl-NL", {hour: '2-digit', minute: '2-digit', hour12: false});
+    const vandaagStr = nuDate.toISOString().split('T')[0];
     const roulatieIndex = Math.floor(nuDate.getSeconds() / 20);
 
-    // Filter alle lessen die nog niet afgelopen zijn, gesorteerd op tijd
+    // FIX: Filter niet op milliseconden, maar op alles wat nog niet afgelopen is VANDAAG of MORGEN
     let alleToekomstig = lessenCache
-        .filter(l => l.full_start.getTime() > (nuDate.getTime() - 60000))
+        .filter(l => {
+            if (l.datum_str > vandaagStr) return true; // Alles van morgen/overmorgen is toekomst
+            return l.eind_tijd > nuStr; // Vandaag: alleen als de eindtijd nog niet bereikt is
+        })
         .sort((a, b) => a.full_start - b.full_start);
 
     if (alleToekomstig.length === 0) return;
 
-    // Bepaal de groepen
     const eerstvolgendeTijd = alleToekomstig[0].start_tijd;
     const eerstvolgendeDatum = alleToekomstig[0].datum_str;
-    
     const lessenNext = alleToekomstig.filter(l => l.start_tijd === eerstvolgendeTijd && l.datum_str === eerstvolgendeDatum);
+    
     const rest = alleToekomstig.filter(l => l.start_tijd !== eerstvolgendeTijd || l.datum_str !== eerstvolgendeDatum);
     const lessenAfterNext = rest.length > 0 ? rest.filter(l => l.start_tijd === rest[0].start_tijd && l.datum_str === rest[0].datum_str) : [];
 
-    let lessenNu = lessenCache.filter(l => l.datum_str === nuDate.toISOString().split('T')[0] && nuStr >= l.start_tijd && nuStr < l.eind_tijd);
+    let lessenNu = lessenCache.filter(l => l.datum_str === vandaagStr && nuStr >= l.start_tijd && nuStr < l.eind_tijd);
 
     let data = {
         nu_status: "VRIJ", nu_naam: "*VRIJ TRAINEN*", nu_tijd: "", nu_vrij: 0,
         next_naam: "*GEEN LESSEN*", next_tijd: "", next_bezetting: ""
     };
 
-    // Logica Boven
+    // Bovenste blok
     if (lessenNu.length > 0) {
         let l = lessenNu[roulatieIndex % lessenNu.length];
         data.nu_status = "LIVE";
@@ -95,27 +94,27 @@ async function updateHomeyRotation() {
         data.nu_tijd = `*${l.start_tijd} - ${l.eind_tijd}*`;
     } else {
         const diff = Math.round((alleToekomstig[0].full_start - nuDate.getTime()) / 1000 / 60);
-        if (diff <= 60) {
+        if (diff <= 60 && diff > -5) { // Extra marge voor lessen die net gestart zijn
             let l = lessenNext[roulatieIndex % lessenNext.length];
             data.nu_status = "VOLGENDE";
             data.nu_naam = `*${l.display_title}*`;
             data.nu_tijd = `*${l.start_tijd} - ${l.eind_tijd}*`;
-            let v = l.max_places - l.attendees;
-            data.nu_vrij = v > 9 ? 9 : (v < 0 ? 0 : v);
+            data.nu_vrij = Math.min(9, Math.max(0, l.max_places - l.attendees));
         }
     }
 
-    // Logica Onder (Altijd de volgende groep die niet bovenin staat)
+    // Onderste blok: Altijd de volgende groep die niet bovenin staat
     let bron = (data.nu_status === "LIVE" || data.nu_status === "VOLGENDE") ? lessenAfterNext : lessenNext;
-    if (bron.length > 0) {
+    
+    if (bron && bron.length > 0) {
         let l = bron[roulatieIndex % bron.length];
-        let v = Math.max(0, l.max_places - l.attendees);
+        let v = Math.min(9, Math.max(0, l.max_places - l.attendees));
         data.next_naam = `*${l.display_title}*`;
         data.next_tijd = `*${l.start_tijd} - ${l.eind_tijd}*`;
-        data.next_bezetting = v <= 0 ? "*VOLGEBOEKT*" : (v === 1 ? "*NOG 1 PLEK VRIJ*" : `*NOG ${v > 9 ? 9 : v} PLEKKEN VRIJ*`);
+        data.next_bezetting = v <= 0 ? "*VOLGEBOEKT*" : (v === 1 ? "*NOG 1 PLEK VRIJ*" : `*NOG ${v} PLEKKEN VRIJ*`);
     }
 
-    if (data.nu_naam !== lastSentData.nu_naam || data.next_naam !== lastSentData.next_naam || bron.length > 1) {
+    if (data.nu_naam !== lastSentData.nu_naam || data.next_naam !== lastSentData.next_naam || (bron && bron.length > 1)) {
         if (HOMEY_URL) {
             try {
                 await axios.get(HOMEY_URL, { params: { tag: JSON.stringify(data) } });
