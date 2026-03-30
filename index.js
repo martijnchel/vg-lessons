@@ -8,10 +8,10 @@ const { CLUB_ID, API_KEY, CLUB_SECRET, HOMEY_URL } = process.env;
 const activityNames = {
     "595083": "BUIKSPIERKWARTIER", "595096": "SPORTYV WANDELEN", "594693": "SPINNING",
     "594694": "PILATES", "595082": "BOKSFIT", "589058": "FITCIRCUIT",
-    "594700": "50-FIT", "595091": "HIIT", "594697": "BODYPUMP", // Aangepast van Spinning naar Bodypump
+    "594700": "50-FIT", "595091": "HIIT", "594697": "BODYPUMP",
     "594699": "FLOW YOGA", "595095": "60+ KRACHT EN BALANS", "594706": "BODYBALANCE",
     "594704": "BBB", "594703": "GENTLE FLOW YOGA", "594695": "ZUMBA",
-    "594701": "BODYSHAPE", "594707": "VINYASA YOGA", "594696": "BOOTCAMP" // Toegevoegd
+    "594701": "BODYSHAPE", "594707": "VINYASA YOGA", "594696": "BOOTCAMP"
 };
 
 let lessenCache = [];
@@ -108,4 +108,37 @@ async function updateHomeyRotation() {
     }
 
     // --- Logica voor Onderste Blok ---
-    let bron = (lessenNu.length > 0 || data.nu_status === "VOLGENDE") ? (lessenAfterNext.length > 0 ? lessenAfterNext : lessenNext
+    let bron = (lessenNu.length > 0 || data.nu_status === "VOLGENDE") ? (lessenAfterNext.length > 0 ? lessenAfterNext : lessenNext) : lessenNext;
+    if (bron && bron.length > 0) {
+        let l = bron[roulatieIndex % bron.length];
+        let v_orig = l.max_places - l.attendees;
+        let v_next = v_orig > 9 ? 9 : (v_orig < 0 ? 0 : v_orig);
+        
+        data.next_naam = `*${l.display_title}*`; 
+        data.next_tijd = `*${l.start_tijd} - ${l.eind_tijd}*`;
+        
+        let b_tekst = v_next <= 0 ? "VOLGEBOEKT" : (v_next === 1 ? "NOG 1 PLEK VRIJ" : `NOG ${v_next} PLEKKEN VRIJ`);
+        data.next_bezetting = `*${b_tekst}*`;
+    }
+
+    // --- SLIMME UPDATE CHECK ---
+    const moetRoulatieNu = (lessenNu.length > 1);
+    const moetRoulatieNext = (bron.length > 1);
+    const naamVeranderd = (data.nu_naam !== lastSentData.nu_naam || data.next_naam !== lastSentData.next_naam);
+
+    if (naamVeranderd || moetRoulatieNu || moetRoulatieNext) {
+        if (HOMEY_URL) {
+            try { 
+                await axios.get(HOMEY_URL, { params: { tag: JSON.stringify(data) } }); 
+                console.log(`[${nuDate.toLocaleTimeString('nl-NL')}] Update verzonden: ${data.nu_naam} | ${data.next_naam}`);
+                lastSentData = { nu_naam: data.nu_naam, next_naam: data.next_naam };
+            } catch (e) { console.error("Homey Error"); }
+        }
+    }
+}
+
+app.listen(PORT, () => {
+    console.log(`Server gestart op poort ${PORT}`);
+    syncVirtuagym();
+    setInterval(updateHomeyRotation, 20000);
+});
