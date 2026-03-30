@@ -78,7 +78,6 @@ async function updateHomeyRotation() {
     let tweedeLes = alleToekomstig.find(l => l.start_tijd !== eerstvolgendeTijd || l.is_vandaag !== eerstvolgendeDatum);
     let lessenAfterNext = tweedeLes ? alleToekomstig.filter(l => l.start_tijd === tweedeLes.start_tijd && l.is_vandaag === tweedeLes.is_vandaag) : [];
 
-    // Standaardwaarden (Bold)
     let data = {
         nu_status: "VRIJ", 
         nu_naam: "*VRIJ TRAINEN*", 
@@ -89,7 +88,6 @@ async function updateHomeyRotation() {
         next_bezetting: ""
     };
 
-    // --- Logica voor Bovenste Blok ---
     if (lessenNu.length > 0) {
         let l = lessenNu[roulatieIndex % lessenNu.length];
         data.nu_status = "LIVE"; 
@@ -107,7 +105,6 @@ async function updateHomeyRotation() {
         }
     }
 
-    // --- Logica voor Onderste Blok ---
     let bron = (lessenNu.length > 0 || data.nu_status === "VOLGENDE") ? (lessenAfterNext.length > 0 ? lessenAfterNext : lessenNext) : lessenNext;
     if (bron && bron.length > 0) {
         let l = bron[roulatieIndex % bron.length];
@@ -121,7 +118,6 @@ async function updateHomeyRotation() {
         data.next_bezetting = `*${b_tekst}*`;
     }
 
-    // --- SLIMME UPDATE CHECK ---
     const moetRoulatieNu = (lessenNu.length > 1);
     const moetRoulatieNext = (bron.length > 1);
     const naamVeranderd = (data.nu_naam !== lastSentData.nu_naam || data.next_naam !== lastSentData.next_naam);
