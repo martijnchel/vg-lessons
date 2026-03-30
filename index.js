@@ -17,8 +17,29 @@ const activityNames = {
 let lessenCache = [];
 let nextSyncTimeout;
 
-// Geheugen om onnodige updates naar Homey te voorkomen
 let lastSentData = { nu_naam: "", next_naam: "" };
+
+// --- NIEUWE CHECK ROUTE ---
+app.get('/check', (req, res) => {
+    const nu = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Amsterdam"}));
+    const morgen = new Date(nu.getTime() + (24 * 60 * 60 * 1000));
+    
+    const overzicht = lessenCache
+        .filter(l => l.full_start >= nu && l.full_start <= morgen)
+        .map(l => ({
+            tijd: l.start_tijd,
+            naam: l.display_title,
+            vandaag: l.is_vandaag,
+            timestamp: l.full_start
+        }));
+
+    res.json({
+        systeem_tijd: nu.toLocaleTimeString('nl-NL'),
+        lessen_gevonden: overzicht.length,
+        rooster: overzicht
+    });
+});
+// -------------------------
 
 function scheduleNextSync() {
     const nu = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Amsterdam"}));
@@ -69,12 +90,7 @@ async function updateHomeyRotation() {
     const roulatieIndex = Math.floor(nuDate.getSeconds() / 20);
 
     let lessenNu = lessenCache.filter(l => l.is_vandaag && nuStr >= l.start_tijd && nuStr < l.eind_tijd);
-    
-    // DE FIX: We kijken 30 minuten terug in de tijd voor 'toekomstige' lessen. 
-    // Dit houdt de Yoga stabiel in de lijst, ook rond de starttijd.
-    let alleToekomstig = lessenCache
-        .filter(l => l.full_start.getTime() > (nuDate.getTime() - 1800000))
-        .sort((a,b) => a.full_start - b.full_start);
+    let alleToekomstig = lessenCache.filter(l => l.full_start > nuDate).sort((a,b) => a.full_start - b.full_start);
     
     let eerstvolgendeTijd = alleToekomstig.length > 0 ? alleToekomstig[0].start_tijd : null;
     let eerstvolgendeDatum = alleToekomstig.length > 0 ? alleToekomstig[0].is_vandaag : true;
@@ -83,7 +99,6 @@ async function updateHomeyRotation() {
     let tweedeLes = alleToekomstig.find(l => l.start_tijd !== eerstvolgendeTijd || l.is_vandaag !== eerstvolgendeDatum);
     let lessenAfterNext = tweedeLes ? alleToekomstig.filter(l => l.start_tijd === tweedeLes.start_tijd && l.is_vandaag === tweedeLes.is_vandaag) : [];
 
-    // Standaardwaarden
     let data = {
         nu_status: "VRIJ", 
         nu_naam: "*VRIJ TRAINEN*", 
@@ -94,7 +109,6 @@ async function updateHomeyRotation() {
         next_bezetting: ""
     };
 
-    // --- Logica voor Bovenste Blok ---
     if (lessenNu.length > 0) {
         let l = lessenNu[roulatieIndex % lessenNu.length];
         data.nu_status = "LIVE"; 
@@ -112,7 +126,6 @@ async function updateHomeyRotation() {
         }
     }
 
-    // --- Logica voor Onderste Blok ---
     let bron = (lessenNu.length > 0 || data.nu_status === "VOLGENDE") ? (lessenAfterNext.length > 0 ? lessenAfterNext : lessenNext) : lessenNext;
     if (bron && bron.length > 0) {
         let l = bron[roulatieIndex % bron.length];
@@ -126,9 +139,8 @@ async function updateHomeyRotation() {
         data.next_bezetting = `*${b_tekst}*`;
     }
 
-    // --- SLIMME UPDATE CHECK ---
     const moetRoulatieNu = (lessenNu.length > 1);
-    const moetRoulatieNext = (bron && bron.length > 1);
+    const moetRoulatieNext = (bron.length > 1);
     const naamVeranderd = (data.nu_naam !== lastSentData.nu_naam || data.next_naam !== lastSentData.next_naam);
 
     if (naamVeranderd || moetRoulatieNu || moetRoulatieNext) {
