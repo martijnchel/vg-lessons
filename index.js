@@ -17,7 +17,6 @@ const activityNames = {
 let lessenCache = [];
 let nextSyncTimeout;
 
-// Geheugen om onnodige updates naar Homey te voorkomen
 let lastSentData = { nu_naam: "", next_naam: "" };
 
 function scheduleNextSync() {
@@ -70,7 +69,6 @@ async function updateHomeyRotation() {
 
     let lessenNu = lessenCache.filter(l => l.is_vandaag && nuStr >= l.start_tijd && nuStr < l.eind_tijd);
     
-    // FIX: Gebruik een kleine marge van 10 minuten zodat lessen niet te vroeg uit de lijst vallen
     let alleToekomstig = lessenCache
         .filter(l => l.full_start.getTime() > (nuDate.getTime() - 600000))
         .sort((a,b) => a.full_start - b.full_start);
@@ -83,16 +81,50 @@ async function updateHomeyRotation() {
     let lessenAfterNext = tweedeLes ? alleToekomstig.filter(l => l.start_tijd === tweedeLes.start_tijd && l.is_vandaag === tweedeLes.is_vandaag) : [];
 
     let data = {
-        nu_status: "VRIJ", 
-        nu_naam: "*VRIJ TRAINEN*", 
-        nu_tijd: "", 
-        nu_vrij: 0,
-        next_naam: "*GEEN LESSEN*", 
-        next_tijd: "", 
-        next_bezetting: ""
+        nu_status: "VRIJ", nu_naam: "*VRIJ TRAINEN*", nu_tijd: "", nu_vrij: 0,
+        next_naam: "*GEEN LESSEN*", next_tijd: "", next_bezetting: ""
     };
 
     if (lessenNu.length > 0) {
         let l = lessenNu[roulatieIndex % lessenNu.length];
         data.nu_status = "LIVE"; 
-        data.nu_naam = `*${l.
+        data.nu_naam = `*${l.display_title}*`;
+        data.nu_tijd = `*${l.start_tijd} - ${l.eind_tijd}*`;
+    } else if (eerstvolgendeTijd && eerstvolgendeDatum) {
+        const diff = Math.round((alleToekomstig[0].full_start - nuDate.getTime()) / 1000 / 60);
+        if (diff <= 60) {
+            let l = lessenNext[roulatieIndex % lessenNext.length];
+            data.nu_status = "VOLGENDE"; 
+            data.nu_naam = `*${l.display_title}*`;
+            data.nu_tijd = `*${l.start_tijd} - ${l.eind_tijd}*`;
+            let v_nu = l.max_places - l.attendees;
+            data.nu_vrij = v_nu > 9 ? 9 : (v_nu < 0 ? 0 : v_nu);
+        }
+    }
+
+    let bron = (lessenNu.length > 0 || data.nu_status === "VOLGENDE") ? (lessenAfterNext.length > 0 ? lessenAfterNext : lessenNext) : lessenNext;
+    if (bron && bron.length > 0) {
+        let l = bron[roulatieIndex % bron.length];
+        let v_orig = l.max_places - l.attendees;
+        let v_next = v_orig > 9 ? 9 : (v_orig < 0 ? 0 : v_orig);
+        data.next_naam = `*${l.display_title}*`; 
+        data.next_tijd = `*${l.start_tijd} - ${l.eind_tijd}*`;
+        let b_tekst = v_next <= 0 ? "VOLGEBOEKT" : (v_next === 1 ? "NOG 1 PLEK VRIJ" : `NOG ${v_next} PLEKKEN VRIJ`);
+        data.next_bezetting = `*${b_tekst}*`;
+    }
+
+    if (data.nu_naam !== lastSentData.nu_naam || data.next_naam !== lastSentData.next_naam || (bron && bron.length > 1)) {
+        if (HOMEY_URL) {
+            try { 
+                await axios.get(HOMEY_URL, { params: { tag: JSON.stringify(data) } }); 
+                lastSentData = { nu_naam: data.nu_naam, next_naam: data.next_naam };
+            } catch (e) { console.error("Homey Error"); }
+        }
+    }
+}
+
+app.listen(PORT, () => {
+    console.log(`Server gestart op poort ${PORT}`);
+    syncVirtuagym();
+    setInterval(updateHomeyRotation, 20000);
+});
