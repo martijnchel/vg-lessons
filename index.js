@@ -43,7 +43,6 @@ async function syncVirtuagym() {
             lessenCache = response.data.result.filter(e => e.canceled === false).map(e => {
                 const eventDate = new Date(e.start);
                 let displayTitle = activityNames[e.activity_id] || (e.title ? e.title.toUpperCase() : `NIEUWE LES`);
-
                 return {
                     ...e,
                     is_vandaag: eventDate.getDate() === nuNL.getDate(),
@@ -53,7 +52,7 @@ async function syncVirtuagym() {
                     full_start: eventDate
                 };
             });
-            console.log(`[${new Date().toLocaleTimeString('nl-NL')}] Sync OK. Totaal: ${lessenCache.length} lessen.`);
+            console.log(`[${new Date().toLocaleTimeString('nl-NL')}] Sync OK.`);
         }
     } catch (e) { console.error("Sync Error"); }
     scheduleNextSync();
@@ -66,40 +65,39 @@ async function updateHomeyRotation() {
     const nuStr = nuDate.toLocaleTimeString("nl-NL", {hour: '2-digit', minute: '2-digit', hour12: false});
     const roulatieIndex = Math.floor(nuDate.getSeconds() / 20);
 
-    // Filter met tijd-buffer om 'net-niet' matches bij de Yoga-les te voorkomen
+    // 1. Zoek lessen die NU bezig zijn
+    let lessenNu = lessenCache.filter(l => l.is_vandaag && nuStr >= l.start_tijd && nuStr < l.eind_tijd);
+
+    // 2. Zoek ALLE lessen die in de toekomst liggen (vanaf nu)
     let alleToekomstig = lessenCache
-        .filter(l => l.full_start.getTime() > (nuDate.getTime() - 600000)) 
+        .filter(l => l.full_start.getTime() > (nuDate.getTime() - 60000)) // 1 minuut marge
         .sort((a,b) => a.full_start - b.full_start);
 
-    let lessenNu = lessenCache.filter(l => l.is_vandaag && nuStr >= l.start_tijd && nuStr < l.eind_tijd);
-    
+    // 3. De EERSTVOLGENDE lesgroep (bijv. de Yoga van 09:30)
     let eerstvolgendeTijd = alleToekomstig.length > 0 ? alleToekomstig[0].start_tijd : null;
     let eerstvolgendeDatum = alleToekomstig.length > 0 ? alleToekomstig[0].is_vandaag : true;
     let lessenNext = alleToekomstig.filter(l => l.start_tijd === eerstvolgendeTijd && l.is_vandaag === eerstvolgendeDatum);
 
-    let tweedeLes = alleToekomstig.find(l => l.start_tijd !== eerstvolgendeTijd || l.is_vandaag !== eerstvolgendeDatum);
-    let lessenAfterNext = tweedeLes ? alleToekomstig.filter(l => l.start_tijd === tweedeLes.start_tijd && l.is_vandaag === tweedeLes.is_vandaag) : [];
+    // 4. De lesgroep DAARNA (bijv. 10:00)
+    let tweedeMoment = alleToekomstig.find(l => l.start_tijd !== eerstvolgendeTijd || l.is_vandaag !== eerstvolgendeDatum);
+    let lessenAfterNext = tweedeMoment ? alleToekomstig.filter(l => l.start_tijd === tweedeMoment.start_tijd && l.is_vandaag === tweedeMoment.is_vandaag) : [];
 
     let data = {
-        nu_status: "VRIJ", 
-        nu_naam: "*VRIJ TRAINEN*", 
-        nu_tijd: "", 
-        nu_vrij: 0,
-        next_naam: "*GEEN LESSEN*", 
-        next_tijd: "", 
-        next_bezetting: ""
+        nu_status: "VRIJ", nu_naam: "*VRIJ TRAINEN*", nu_tijd: "", nu_vrij: 0,
+        next_naam: "*GEEN LESSEN*", next_tijd: "", next_bezetting: ""
     };
 
+    // BOVENSTE BLOK
     if (lessenNu.length > 0) {
         let l = lessenNu[roulatieIndex % lessenNu.length];
-        data.nu_status = "LIVE"; 
+        data.nu_status = "LIVE";
         data.nu_naam = `*${l.display_title}*`;
         data.nu_tijd = `*${l.start_tijd} - ${l.eind_tijd}*`;
-    } else if (eerstvolgendeTijd && eerstvolgendeDatum) {
+    } else if (alleToekomstig.length > 0) {
         const diff = Math.round((alleToekomstig[0].full_start - nuDate.getTime()) / 1000 / 60);
         if (diff <= 60) {
             let l = lessenNext[roulatieIndex % lessenNext.length];
-            data.nu_status = "VOLGENDE"; 
+            data.nu_status = "VOLGENDE";
             data.nu_naam = `*${l.display_title}*`;
             data.nu_tijd = `*${l.start_tijd} - ${l.eind_tijd}*`;
             let v_nu = l.max_places - l.attendees;
@@ -107,13 +105,14 @@ async function updateHomeyRotation() {
         }
     }
 
-    let bron = (lessenNu.length > 0 || data.nu_status === "VOLGENDE") ? (lessenAfterNext.length > 0 ? lessenAfterNext : lessenNext) : lessenNext;
-    if (bron && bron.length > 0) {
+    // ONDERSTE BLOK (Verbeterde logica: pak altijd de eerstvolgende die niet bovenin staat)
+    let bron = (data.nu_status === "LIVE" || data.nu_status === "VOLGENDE") ? (lessenAfterNext.length > 0 ? lessenAfterNext : []) : lessenNext;
+    
+    if (bron.length > 0) {
         let l = bron[roulatieIndex % bron.length];
         let v_orig = l.max_places - l.attendees;
         let v_next = v_orig > 9 ? 9 : (v_orig < 0 ? 0 : v_orig);
-        
-        data.next_naam = `*${l.display_title}*`; 
+        data.next_naam = `*${l.display_title}*`;
         data.next_tijd = `*${l.start_tijd} - ${l.eind_tijd}*`;
         let b_tekst = v_next <= 0 ? "VOLGEBOEKT" : (v_next === 1 ? "NOG 1 PLEK VRIJ" : `NOG ${v_next} PLEKKEN VRIJ`);
         data.next_bezetting = `*${b_tekst}*`;
@@ -121,8 +120,9 @@ async function updateHomeyRotation() {
 
     if (data.nu_naam !== lastSentData.nu_naam || data.next_naam !== lastSentData.next_naam || lessenNu.length > 1 || bron.length > 1) {
         if (HOMEY_URL) {
-            try { 
-                await axios.get(HOMEY_URL, { params: { tag: JSON.stringify(data) } }); 
+            try {
+                await axios.get(HOMEY_URL, { params: { tag: JSON.stringify(data) } });
+                console.log(`[${nuDate.toLocaleTimeString('nl-NL')}] Update: ${data.nu_naam} | ${data.next_naam}`);
                 lastSentData = { nu_naam: data.nu_naam, next_naam: data.next_naam };
             } catch (e) { console.error("Homey Error"); }
         }
