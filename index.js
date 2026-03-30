@@ -44,7 +44,6 @@ async function syncVirtuagym() {
         if (response.data && response.data.result) {
             lessenCache = response.data.result.filter(e => e.canceled === false).map(e => {
                 const eventDate = new Date(e.start);
-                // Naam ophalen en naar hoofdletters omzetten
                 let displayTitle = activityNames[e.activity_id] || (e.title ? e.title.toUpperCase() : `NIEUWE LES`);
 
                 return {
@@ -95,14 +94,14 @@ async function updateHomeyRotation() {
         let l = lessenNu[roulatieIndex % lessenNu.length];
         data.nu_status = "LIVE"; 
         data.nu_naam = `*${l.display_title}*`;
-        data.nu_tijd = `${l.start_tijd} - ${l.eind_tijd}`;
+        data.nu_tijd = `*${l.start_tijd} - ${l.eind_tijd}*`;
     } else if (eerstvolgendeTijd && eerstvolgendeDatum) {
         const diff = Math.round((alleToekomstig[0].full_start - nuDate.getTime()) / 1000 / 60);
         if (diff <= 60) {
             let l = lessenNext[roulatieIndex % lessenNext.length];
             data.nu_status = "VOLGENDE"; 
             data.nu_naam = `*${l.display_title}*`;
-            data.nu_tijd = `${l.start_tijd} - ${l.eind_tijd}`;
+            data.nu_tijd = `*${l.start_tijd} - ${l.eind_tijd}*`;
             let v_nu = l.max_places - l.attendees;
             data.nu_vrij = v_nu > 9 ? 9 : (v_nu < 0 ? 0 : v_nu);
         }
@@ -116,7 +115,7 @@ async function updateHomeyRotation() {
         let v_next = v_orig > 9 ? 9 : (v_orig < 0 ? 0 : v_orig);
         
         data.next_naam = `*${l.display_title}*`; 
-        data.next_tijd = `${l.start_tijd} - ${l.eind_tijd}`;
+        data.next_tijd = `*${l.start_tijd} - ${l.eind_tijd}*`;
         
         let b_tekst = v_next <= 0 ? "VOLGEBOEKT" : (v_next === 1 ? "NOG 1 PLEK VRIJ" : `NOG ${v_next} PLEKKEN VRIJ`);
         data.next_bezetting = `*${b_tekst}*`;
