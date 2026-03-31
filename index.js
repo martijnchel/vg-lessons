@@ -75,19 +75,17 @@ async function updateHomeyRotation() {
     const nuStr = nuDate.toLocaleTimeString("nl-NL", {hour: '2-digit', minute: '2-digit', hour12: false});
     const roulatieIndex = Math.floor(nuDate.getSeconds() / 20);
 
-    // 1. Wat is er nu LIVE (alleen vandaag)
+    // 1. Wat is er nu LIVE
     let lessenNu = lessenCache.filter(l => l.is_vandaag && nuStr >= l.start_tijd && nuStr < l.eind_tijd);
     
-    // 2. Wat is de toekomst (vandaag en morgen, chronologisch)
+    // 2. Wat is de toekomst (chronologisch)
     let alleToekomstig = lessenCache
         .filter(l => l.full_start > nuDate)
         .sort((a,b) => a.full_start - b.full_start);
     
-    // Definieer de eerstvolgende lesgroep
     let eerstvolgendeFullStart = alleToekomstig.length > 0 ? alleToekomstig[0].full_start : null;
     let lessenNext = alleToekomstig.filter(l => eerstvolgendeFullStart && l.full_start.getTime() === eerstvolgendeFullStart.getTime());
 
-    // Definieer de lesgroep DAARNA
     let tweedeMoment = alleToekomstig.find(l => eerstvolgendeFullStart && l.full_start.getTime() !== eerstvolgendeFullStart.getTime());
     let lessenAfterNext = tweedeMoment ? alleToekomstig.filter(l => l.full_start.getTime() === tweedeMoment.full_start.getTime()) : [];
 
@@ -113,11 +111,19 @@ async function updateHomeyRotation() {
         }
     }
 
-    // --- ONDERSTE BLOK (BRON) ---
-    // Als de les in het bovenste blok staat, pak dan de volgende groep. Anders de eerste groep.
+    // --- ONDERSTE BLOK ---
+    // We tonen de eerstvolgende groep (morgen 09:00), BEHALVE als die groep al bovenin staat.
     let bron = lessenNext;
-    if (bron.length > 0 && data.nu_naam === `*${bron[0].display_title}*`) {
-        bron = lessenAfterNext.length > 0 ? lessenAfterNext : [];
+    
+    // De check of de 'next' groep al boven getoond wordt (als VOLGENDE of als LIVE)
+    if (bron.length > 0 && data.nu_naam !== "*VRIJ TRAINEN*") {
+        // Controleer of de les die we onderin willen tonen, de les is die nu bovenin staat
+        // We vergelijken de titels om te zien of de 09:00 les al "bezet" is bovenin.
+        const isBovenBezet = bron.some(l => `*${l.display_title}*` === data.nu_naam);
+        
+        if (isBovenBezet) {
+            bron = lessenAfterNext.length > 0 ? lessenAfterNext : [];
+        }
     }
 
     if (bron && bron.length > 0) {
@@ -129,7 +135,7 @@ async function updateHomeyRotation() {
         data.next_bezetting = `*${b_tekst}*`;
     }
 
-    // --- VERZENDEN NAAR HOMEY ---
+    // --- VERZENDEN ---
     const naamVeranderd = (data.nu_naam !== lastSentData.nu_naam || data.next_naam !== lastSentData.next_naam);
     const moetRoulatie = (lessenNu.length > 1 || bron.length > 1);
 
