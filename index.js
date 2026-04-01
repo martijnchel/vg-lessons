@@ -18,7 +18,6 @@ let lessenCache = [];
 let nextSyncTimeout;
 let lastSentData = { nu_naam: "", next_naam: "" };
 
-// --- CHECK ROUTE VOOR DEBUGGING ---
 app.get('/check', (req, res) => {
     const nu = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Amsterdam"}));
     const morgen = new Date(nu.getTime() + (24 * 60 * 60 * 1000));
@@ -53,13 +52,15 @@ async function syncVirtuagym() {
         if (response.data && response.data.result) {
             lessenCache = response.data.result.filter(e => e.canceled === false).map(e => {
                 const eventDate = new Date(e.start);
+                const endDate = new Date(e.end);
                 return {
                     ...e,
                     is_vandaag: eventDate.getDate() === nuNL.getDate(),
                     display_title: activityNames[e.activity_id] || (e.title ? e.title.toUpperCase() : `NIEUWE LES`),
                     start_tijd: e.start.split(' ')[1].substring(0, 5),
                     eind_tijd: e.end.split(' ')[1].substring(0, 5),
-                    full_start: eventDate
+                    full_start: eventDate,
+                    full_end: endDate
                 };
             });
             console.log(`[${new Date().toLocaleTimeString('nl-NL')}] Sync OK. ${lessenCache.length} lessen in cache.`);
@@ -72,13 +73,12 @@ async function updateHomeyRotation() {
     if (lessenCache.length === 0) return;
 
     const nuDate = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Amsterdam"}));
-    const nuStr = nuDate.toLocaleTimeString("nl-NL", {hour: '2-digit', minute: '2-digit', hour12: false});
     const roulatieIndex = Math.floor(nuDate.getSeconds() / 20);
 
-    // 1. Wat is er nu LIVE
-    let lessenNu = lessenCache.filter(l => l.is_vandaag && nuStr >= l.start_tijd && nuStr < l.eind_tijd);
+    // 1. Wat is er nu LIVE (vergelijken op volledige datum/tijd objecten)
+    let lessenNu = lessenCache.filter(l => nuDate >= l.full_start && nuDate < l.full_end);
     
-    // 2. Wat is de toekomst (chronologisch)
+    // 2. Wat is de toekomst (alles wat na NU start)
     let alleToekomstig = lessenCache
         .filter(l => l.full_start > nuDate)
         .sort((a,b) => a.full_start - b.full_start);
@@ -112,13 +112,11 @@ async function updateHomeyRotation() {
     }
 
     // --- ONDERSTE BLOK ---
-    // We tonen de eerstvolgende groep (morgen 09:00), BEHALVE als die groep al bovenin staat.
     let bron = lessenNext;
     
-    // De check of de 'next' groep al boven getoond wordt (als VOLGENDE of als LIVE)
     if (bron.length > 0 && data.nu_naam !== "*VRIJ TRAINEN*") {
-        // Controleer of de les die we onderin willen tonen, de les is die nu bovenin staat
-        // We vergelijken de titels om te zien of de 09:00 les al "bezet" is bovenin.
+        // We checken of de les die we onderin willen tonen al in het bovenste blok staat.
+        // We doen dit op basis van de unieke event_id in plaats van alleen de naam.
         const isBovenBezet = bron.some(l => `*${l.display_title}*` === data.nu_naam);
         
         if (isBovenBezet) {
@@ -136,6 +134,7 @@ async function updateHomeyRotation() {
     }
 
     // --- VERZENDEN ---
+    // Altijd verzenden als de tekst veranderd is OF als er gerouleerd moet worden
     const naamVeranderd = (data.nu_naam !== lastSentData.nu_naam || data.next_naam !== lastSentData.next_naam);
     const moetRoulatie = (lessenNu.length > 1 || bron.length > 1);
 
@@ -144,7 +143,7 @@ async function updateHomeyRotation() {
             try { 
                 await axios.get(HOMEY_URL, { params: { tag: JSON.stringify(data) } }); 
                 lastSentData = { nu_naam: data.nu_naam, next_naam: data.next_naam };
-                console.log(`[${nuDate.toLocaleTimeString('nl-NL')}] Update: ${data.nu_naam} | ${data.next_naam}`);
+                console.log(`[${nuDate.toLocaleTimeString('nl-NL')}] Update: ${data.nu_naam} | ${data.next_naam} (Status: ${data.nu_status})`);
             } catch (e) { console.error("Homey Error"); }
         }
     }
