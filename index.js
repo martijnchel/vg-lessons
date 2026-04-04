@@ -75,7 +75,7 @@ async function updateHomeyRotation() {
     const nuDate = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Amsterdam"}));
     const roulatieIndex = Math.floor(nuDate.getSeconds() / 20);
 
-    // 1. Wat is er nu LIVE (vergelijken op volledige datum/tijd objecten)
+    // 1. Wat is er nu LIVE
     let lessenNu = lessenCache.filter(l => nuDate >= l.full_start && nuDate < l.full_end);
     
     // 2. Wat is de toekomst (alles wat na NU start)
@@ -85,9 +85,6 @@ async function updateHomeyRotation() {
     
     let eerstvolgendeFullStart = alleToekomstig.length > 0 ? alleToekomstig[0].full_start : null;
     let lessenNext = alleToekomstig.filter(l => eerstvolgendeFullStart && l.full_start.getTime() === eerstvolgendeFullStart.getTime());
-
-    let tweedeMoment = alleToekomstig.find(l => eerstvolgendeFullStart && l.full_start.getTime() !== eerstvolgendeFullStart.getTime());
-    let lessenAfterNext = tweedeMoment ? alleToekomstig.filter(l => l.full_start.getTime() === tweedeMoment.full_start.getTime()) : [];
 
     let data = {
         nu_status: "VRIJ", nu_naam: "*VRIJ TRAINEN*", nu_tijd: "", nu_vrij: 0,
@@ -112,17 +109,9 @@ async function updateHomeyRotation() {
     }
 
     // --- ONDERSTE BLOK ---
+    // We tonen hier altijd de eerstvolgende lessen in de toekomst (lessenNext).
+    // De blokkade voor dubbele namen is verwijderd zodat morgenochtend altijd getoond wordt.
     let bron = lessenNext;
-    
-    if (bron.length > 0 && data.nu_naam !== "*VRIJ TRAINEN*") {
-        // We checken of de les die we onderin willen tonen al in het bovenste blok staat.
-        // We doen dit op basis van de unieke event_id in plaats van alleen de naam.
-        const isBovenBezet = bron.some(l => `*${l.display_title}*` === data.nu_naam);
-        
-        if (isBovenBezet) {
-            bron = lessenAfterNext.length > 0 ? lessenAfterNext : [];
-        }
-    }
 
     if (bron && bron.length > 0) {
         let l = bron[roulatieIndex % bron.length];
@@ -134,7 +123,6 @@ async function updateHomeyRotation() {
     }
 
     // --- VERZENDEN ---
-    // Altijd verzenden als de tekst veranderd is OF als er gerouleerd moet worden
     const naamVeranderd = (data.nu_naam !== lastSentData.nu_naam || data.next_naam !== lastSentData.next_naam);
     const moetRoulatie = (lessenNu.length > 1 || bron.length > 1);
 
@@ -143,7 +131,7 @@ async function updateHomeyRotation() {
             try { 
                 await axios.get(HOMEY_URL, { params: { tag: JSON.stringify(data) } }); 
                 lastSentData = { nu_naam: data.nu_naam, next_naam: data.next_naam };
-                console.log(`[${nuDate.toLocaleTimeString('nl-NL')}] Update: ${data.nu_naam} | ${data.next_naam} (Status: ${data.nu_status})`);
+                console.log(`[${nuDate.toLocaleTimeString('nl-NL')}] Update: ${data.nu_naam} | ${data.next_naam}`);
             } catch (e) { console.error("Homey Error"); }
         }
     }
