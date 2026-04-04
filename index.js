@@ -78,13 +78,12 @@ async function updateHomeyRotation() {
     // 1. Wat is er nu LIVE
     let lessenNu = lessenCache.filter(l => nuDate >= l.full_start && nuDate < l.full_end);
     
-    // 2. Wat is de toekomst (alles wat na NU start)
+    // 2. Wat is de toekomst
     let alleToekomstig = lessenCache
         .filter(l => l.full_start > nuDate)
         .sort((a,b) => a.full_start - b.full_start);
     
     let eerstvolgendeFullStart = alleToekomstig.length > 0 ? alleToekomstig[0].full_start : null;
-    let lessenNext = alleToekomstig.filter(l => eerstvolgendeFullStart && l.full_start.getTime() === eerstvolgendeFullStart.getTime());
 
     let data = {
         nu_status: "VRIJ", nu_naam: "*VRIJ TRAINEN*", nu_tijd: "", nu_vrij: 0,
@@ -92,29 +91,39 @@ async function updateHomeyRotation() {
     };
 
     // --- BOVENSTE BLOK ---
+    let getoondBovenTijdstip = null;
+
     if (lessenNu.length > 0) {
         let l = lessenNu[roulatieIndex % lessenNu.length];
         data.nu_status = "LIVE"; 
         data.nu_naam = `*${l.display_title}*`;
         data.nu_tijd = `*${l.start_tijd} - ${l.eind_tijd}*`;
+        getoondBovenTijdstip = l.full_start.getTime();
     } else if (eerstvolgendeFullStart) {
         const diff = Math.round((eerstvolgendeFullStart - nuDate.getTime()) / 1000 / 60);
         if (diff <= 60) {
+            let lessenNext = alleToekomstig.filter(l => l.full_start.getTime() === eerstvolgendeFullStart.getTime());
             let l = lessenNext[roulatieIndex % lessenNext.length];
             data.nu_status = "VOLGENDE"; 
             data.nu_naam = `*${l.display_title}*`;
             data.nu_tijd = `*${l.start_tijd} - ${l.eind_tijd}*`;
             data.nu_vrij = Math.min(9, Math.max(0, l.max_places - l.attendees));
+            getoondBovenTijdstip = eerstvolgendeFullStart.getTime();
         }
     }
 
     // --- ONDERSTE BLOK ---
-    // We tonen hier altijd de eerstvolgende lessen in de toekomst (lessenNext).
-    // De blokkade voor dubbele namen is verwijderd zodat morgenochtend altijd getoond wordt.
-    let bron = lessenNext;
+    // Filter alle lessen die al in het bovenste blok getoond worden (op basis van starttijd)
+    let bronLessen = alleToekomstig;
+    if (getoondBovenTijdstip) {
+        bronLessen = alleToekomstig.filter(l => l.full_start.getTime() > getoondBovenTijdstip);
+    }
 
-    if (bron && bron.length > 0) {
-        let l = bron[roulatieIndex % bron.length];
+    if (bronLessen.length > 0) {
+        let volgendeMoment = bronLessen[0].full_start.getTime();
+        let displayLessen = bronLessen.filter(l => l.full_start.getTime() === volgendeMoment);
+        
+        let l = displayLessen[roulatieIndex % displayLessen.length];
         let v = Math.min(9, Math.max(0, l.max_places - l.attendees));
         data.next_naam = `*${l.display_title}*`; 
         data.next_tijd = `*${l.start_tijd} - ${l.eind_tijd}*`;
@@ -124,7 +133,7 @@ async function updateHomeyRotation() {
 
     // --- VERZENDEN ---
     const naamVeranderd = (data.nu_naam !== lastSentData.nu_naam || data.next_naam !== lastSentData.next_naam);
-    const moetRoulatie = (lessenNu.length > 1 || bron.length > 1);
+    const moetRoulatie = (lessenNu.length > 1 || (getoondBovenTijdstip && alleToekomstig.filter(l => l.full_start.getTime() === getoondBovenTijdstip).length > 1));
 
     if (naamVeranderd || moetRoulatie) {
         if (HOMEY_URL) {
