@@ -18,24 +18,6 @@ let lessenCache = [];
 let nextSyncTimeout;
 let lastSentData = { nu_naam: "", next_naam: "" };
 
-// Parseert een tijdstring van de Virtuagym API ("2025-04-13 17:45:00") als
-// Europe/Amsterdam-tijd, zodat het correct werkt op servers die in UTC draaien.
-function parseAmsterdamTime(dateStr) {
-    const iso = dateStr.replace(' ', 'T');
-    const [date, time] = iso.split('T');
-    const [year, month, day] = date.split('-').map(Number);
-    const [hour, minute, second] = time.split(':').map(Number);
-
-    // Maak eerst een UTC-datum aan alsof de tijd UTC is
-    const utcDate = new Date(Date.UTC(year, month - 1, day, hour, minute, second || 0));
-    // Bepaal wat Amsterdam op dat UTC-moment als lokale tijd zou tonen
-    const localStr = utcDate.toLocaleString("en-US", { timeZone: "Europe/Amsterdam" });
-    const localDate = new Date(localStr);
-    // Bereken de offset en corrigeer
-    const offset = utcDate.getTime() - localDate.getTime();
-    return new Date(utcDate.getTime() + offset);
-}
-
 app.get('/check', (req, res) => {
     const nu = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Amsterdam"}));
     const morgen = new Date(nu.getTime() + (24 * 60 * 60 * 1000));
@@ -54,7 +36,7 @@ function scheduleNextSync() {
     const nu = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Amsterdam"}));
     const tijdDecimaal = nu.getHours() + (nu.getMinutes() / 60);
     const isPiek = (tijdDecimaal >= 6.5 && tijdDecimaal < 12) || (tijdDecimaal >= 17 && tijdDecimaal < 21.5);
-    const interval = isPiek ? 300000 : 900000;
+    const interval = isPiek ? 300000 : 900000; 
     if (nextSyncTimeout) clearTimeout(nextSyncTimeout);
     nextSyncTimeout = setTimeout(syncVirtuagym, interval);
 }
@@ -63,14 +45,14 @@ async function syncVirtuagym() {
     try {
         const nuNL = new Date(new Date().toLocaleString("en-US", {timeZone: "Europe/Amsterdam"}));
         const start = Math.floor(new Date(nuNL).setHours(0,0,0,0) / 1000);
-        const end = start + (2 * 24 * 60 * 60) - 1;
+        const end = start + (2 * 24 * 60 * 60) - 1; 
         const response = await axios.get(`https://api.virtuagym.com/api/v1/club/${CLUB_ID}/events`, {
             params: { api_key: API_KEY, club_secret: CLUB_SECRET, timestamp_start: start, timestamp_end: end }
         });
         if (response.data && response.data.result) {
             lessenCache = response.data.result.filter(e => e.canceled === false).map(e => {
-                const eventDate = parseAmsterdamTime(e.start);
-                const endDate = parseAmsterdamTime(e.end);
+                const eventDate = new Date(e.start);
+                const endDate = new Date(e.end);
                 return {
                     ...e,
                     is_vandaag: eventDate.getDate() === nuNL.getDate(),
@@ -95,12 +77,12 @@ async function updateHomeyRotation() {
 
     // 1. Wat is er nu LIVE
     let lessenNu = lessenCache.filter(l => nuDate >= l.full_start && nuDate < l.full_end);
-
+    
     // 2. Wat is de toekomst
     let alleToekomstig = lessenCache
         .filter(l => l.full_start > nuDate)
         .sort((a,b) => a.full_start - b.full_start);
-
+    
     let eerstvolgendeFullStart = alleToekomstig.length > 0 ? alleToekomstig[0].full_start : null;
 
     let data = {
@@ -113,7 +95,7 @@ async function updateHomeyRotation() {
 
     if (lessenNu.length > 0) {
         let l = lessenNu[roulatieIndex % lessenNu.length];
-        data.nu_status = "LIVE";
+        data.nu_status = "LIVE"; 
         data.nu_naam = `*${l.display_title}*`;
         data.nu_tijd = `*${l.start_tijd} - ${l.eind_tijd}*`;
         getoondBovenTijdstip = l.full_start.getTime();
@@ -122,7 +104,7 @@ async function updateHomeyRotation() {
         if (diff <= 60) {
             let lessenNext = alleToekomstig.filter(l => l.full_start.getTime() === eerstvolgendeFullStart.getTime());
             let l = lessenNext[roulatieIndex % lessenNext.length];
-            data.nu_status = "VOLGENDE";
+            data.nu_status = "VOLGENDE"; 
             data.nu_naam = `*${l.display_title}*`;
             data.nu_tijd = `*${l.start_tijd} - ${l.eind_tijd}*`;
             data.nu_vrij = Math.min(9, Math.max(0, l.max_places - l.attendees));
@@ -140,10 +122,10 @@ async function updateHomeyRotation() {
     if (bronLessen.length > 0) {
         let volgendeMoment = bronLessen[0].full_start.getTime();
         let displayLessen = bronLessen.filter(l => l.full_start.getTime() === volgendeMoment);
-
+        
         let l = displayLessen[roulatieIndex % displayLessen.length];
         let v = Math.min(9, Math.max(0, l.max_places - l.attendees));
-        data.next_naam = `*${l.display_title}*`;
+        data.next_naam = `*${l.display_title}*`; 
         data.next_tijd = `*${l.start_tijd} - ${l.eind_tijd}*`;
         let b_tekst = v <= 0 ? "VOLGEBOEKT" : (v === 1 ? "NOG 1 PLEK VRIJ" : `NOG ${v} PLEKKEN VRIJ`);
         data.next_bezetting = `*${b_tekst}*`;
@@ -155,8 +137,8 @@ async function updateHomeyRotation() {
 
     if (naamVeranderd || moetRoulatie) {
         if (HOMEY_URL) {
-            try {
-                await axios.get(HOMEY_URL, { params: { tag: JSON.stringify(data) } });
+            try { 
+                await axios.get(HOMEY_URL, { params: { tag: JSON.stringify(data) } }); 
                 lastSentData = { nu_naam: data.nu_naam, next_naam: data.next_naam };
                 console.log(`[${nuDate.toLocaleTimeString('nl-NL')}] Update: ${data.nu_naam} | ${data.next_naam}`);
             } catch (e) { console.error("Homey Error"); }
